@@ -28,7 +28,7 @@ Push the current files to GitHub, open the Vercel project's **Deployments** tab,
 
 ## Redis database
 
-Add a Redis-compatible integration from the Vercel Marketplace and connect it to the project. Ensure it creates a private `REDIS_URL` environment variable. The app uses separate Redis keys for each UTC hour and keeps the all-time best scores separately.
+Add the **Upstash Redis** integration from the Vercel Marketplace and connect it to the project. It creates the connectionless HTTP credentials used by Vercel Functions. The app uses separate Redis keys for each UTC hour and keeps the all-time best scores separately.
 
 ## Required environment variables
 
@@ -37,7 +37,8 @@ Add these to the Vercel Production environment:
 ```text
 VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
 SOLANA_RPC_URL=https://api.devnet.solana.com
-REDIS_URL=provided-by-your-redis-integration
+UPSTASH_REDIS_REST_URL=provided-by-upstash
+UPSTASH_REDIS_REST_TOKEN=provided-by-upstash
 JOIN_FEE_RECEIVER=PUBLIC_ADDRESS_OF_DEDICATED_DEVNET_WALLET
 PAYOUT_WALLET_SECRET_KEY=[64,SECRET,KEY,BYTES,...]
 CRON_SECRET=LONG_RANDOM_SECRET

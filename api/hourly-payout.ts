@@ -1,12 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { Redis } from 'ioredis'
+import { requireRedis } from './redis.js'
 
 const HOUR_MS = 60 * 60 * 1000
 const DEVNET_GENESIS_HASH = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
-const redisUrl = process.env.REDIS_URL
-const redis = redisUrl ? new Redis(redisUrl, { maxRetriesPerRequest: 2, enableReadyCheck: false }) : null
 const solana = new Connection(process.env.SOLANA_RPC_URL ?? 'https://api.devnet.solana.com', 'confirmed')
 
 const scoresKey = (hour: number) => `dinorun:hour:${hour}:scores`
@@ -34,31 +32,30 @@ function loadPayoutWallet() {
 }
 
 async function settleHour(hour: number) {
-  if (!redis) throw new Error('REDIS_URL is not configured.')
+  const redis = requireRedis()
   const authority = loadPayoutWallet()
   const receiver = new PublicKey(process.env.JOIN_FEE_RECEIVER ?? '')
   if (!authority.publicKey.equals(receiver)) throw new Error('The payout key does not match JOIN_FEE_RECEIVER.')
   if (await solana.getGenesisHash() !== DEVNET_GENESIS_HASH) throw new Error('Hourly payouts are locked to Solana devnet.')
 
-  const existingRaw = await redis.get(payoutKey(hour))
-  if (existingRaw) {
-    const existing = JSON.parse(existingRaw) as PayoutRecord
+  const existing = await redis.get<PayoutRecord>(payoutKey(hour))
+  if (existing) {
     if (existing.state === 'confirmed') return { alreadyPaid: true, ...existing }
     const chainStatus = (await solana.getSignatureStatuses([existing.signature], { searchTransactionHistory: true })).value[0]
     if (chainStatus && !chainStatus.err && (chainStatus.confirmationStatus === 'confirmed' || chainStatus.confirmationStatus === 'finalized')) {
       const confirmed = { ...existing, state: 'confirmed' as const }
-      await redis.set(payoutKey(hour), JSON.stringify(confirmed), 'EX', 60 * 60 * 24 * 90)
+      await redis.set(payoutKey(hour), confirmed, { ex: 60 * 60 * 24 * 90 })
       return { alreadyPaid: true, ...confirmed }
     }
     if (!chainStatus?.err && Date.now() - existing.createdAt < 3 * 60_000) return { pending: true, ...existing }
     await redis.del(payoutKey(hour))
   }
 
-  const lock = await redis.set(lockKey(hour), String(Date.now()), 'EX', 300, 'NX')
+  const lock = await redis.set(lockKey(hour), String(Date.now()), { ex: 300, nx: true })
   if (!lock) return { pending: true, message: 'Another payout invocation owns the lock.' }
   try {
-    const [winner] = await redis.zrevrange(scoresKey(hour), 0, 0)
-    const lamports = Number(await redis.get(poolKey(hour)) ?? 0)
+    const [winner] = await redis.zrange<string[]>(scoresKey(hour), 0, 0, { rev: true })
+    const lamports = Number(await redis.get<number>(poolKey(hour)) ?? 0)
     if (!winner || lamports <= 0) return { skipped: true, message: 'This hour has no paid entries.' }
     const winnerKey = new PublicKey(winner)
     const balance = await solana.getBalance(authority.publicKey, 'confirmed')
@@ -71,11 +68,11 @@ async function settleHour(hour: number) {
     transaction.sign(authority)
     const signature = bs58.encode(transaction.signature!)
     const record: PayoutRecord = { state: 'sending', signature, winner, lamports, createdAt: Date.now() }
-    await redis.set(payoutKey(hour), JSON.stringify(record), 'EX', 60 * 60 * 24 * 90)
+    await redis.set(payoutKey(hour), record, { ex: 60 * 60 * 24 * 90 })
     await solana.sendRawTransaction(transaction.serialize(), { skipPreflight: false, maxRetries: 3 })
     await solana.confirmTransaction({ signature, ...latest }, 'confirmed')
     const confirmed = { ...record, state: 'confirmed' as const }
-    await redis.set(payoutKey(hour), JSON.stringify(confirmed), 'EX', 60 * 60 * 24 * 90)
+    await redis.set(payoutKey(hour), confirmed, { ex: 60 * 60 * 24 * 90 })
     return confirmed
   } finally {
     await redis.del(lockKey(hour))

@@ -8,6 +8,17 @@ type Phase = 'ready' | 'running' | 'finished'
 
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
+async function readApiResponse(response: Response) {
+  const text = await response.text()
+  let body: Record<string, any>
+  try { body = JSON.parse(text) as Record<string, any> }
+  catch {
+    throw new Error(`Game API unavailable (${response.status}). Redeploy Build V2 and check the Vercel function logs.`)
+  }
+  if (!response.ok) throw new Error(typeof body.message === 'string' ? body.message : `Game API request failed (${response.status}).`)
+  return body
+}
+
 export default function SingleplayerDinoGame({ address, localWallet, sendTransaction, connection, onExit }: {
   address: string
   localWallet: Keypair | null
@@ -34,10 +45,9 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const loadGame = useCallback(async () => {
     try {
       const response = await fetch('/api/game')
-      const body = await response.json()
-      if (!response.ok) throw new Error(body.message ?? 'Could not load game.')
-      setConfig(body)
-      setLeaderboard(body.leaderboard)
+      const body = await readApiResponse(response)
+      setConfig(body as GameConfig)
+      setLeaderboard(body.leaderboard as LeaderboardRow[])
       setStatus('Ready to play')
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not load game.')
@@ -61,9 +71,8 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'submit-score', wallet: address, token: gameToken.current, score }),
       })
-      const body = await response.json()
-      if (!response.ok) throw new Error(body.message ?? 'Could not submit score.')
-      setLeaderboard(body.leaderboard)
+      const body = await readApiResponse(response)
+      setLeaderboard(body.leaderboard as LeaderboardRow[])
       setStatus('Score saved')
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Score could not be saved.')
@@ -128,13 +137,12 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'verify-payment', wallet: address, signature }),
       })
-      const body = await response.json()
-      if (!response.ok) throw new Error(body.message ?? 'Payment verification failed.')
-      gameToken.current = body.token
-      setConfig(current => current ? { ...current, poolLamports: body.poolLamports ?? current.poolLamports } : current)
-      setSeed(body.seed)
-      setStartAt(body.startAt)
-      setNow(body.startAt)
+      const body = await readApiResponse(response)
+      gameToken.current = String(body.token)
+      setConfig(current => current ? { ...current, poolLamports: Number(body.poolLamports ?? current.poolLamports) } : current)
+      setSeed(Number(body.seed))
+      setStartAt(Number(body.startAt))
+      setNow(Number(body.startAt))
       yRef.current = 0
       velocityRef.current = 0
       finishedRef.current = false
@@ -185,7 +193,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           {obstacles.map((left, index) => <span className="cactus" key={index} style={{ left: `${left}%` }}><i /><i /><b /></span>)}
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase === 'finished' && <div className="arena-message result"><strong>Game over</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a singleplayer run for 0.01 devnet SOL.</span>{config?.recipient && <code>Receiver: {short(config.recipient)}</code>}{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying || !config?.recipient} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>The hourly #1 score receives that hour's tracked entry pool on devnet.</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>{config ? 'Ready to play?' : 'Game service unavailable'}</strong><span>{config ? 'Start a singleplayer run for 0.01 devnet SOL.' : 'This is an API/database configuration error, not a multiplayer connection.'}</span>{config?.recipient && <code>Receiver: {short(config.recipient)}</code>}{(paymentError || (!config && status)) && <p>{paymentError || status}</p>}{config ? <button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button> : <button className="join-game-button" onClick={event => { event.stopPropagation(); setStatus('Loading game service...'); loadGame() }}>RETRY GAME SERVICE</button>}<small>The hourly #1 score receives that hour's tracked entry pool on devnet.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>

@@ -1,13 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { randomUUID } from 'node:crypto'
 import { Connection, PublicKey } from '@solana/web3.js'
-import { Redis } from 'ioredis'
+import { redis, requireRedis } from './redis.js'
 
 const JOIN_FEE_LAMPORTS = 10_000_000
 const ALL_TIME_LEADERBOARD_KEY = 'dinorun:leaderboard:scores:v1'
 const HOUR_MS = 60 * 60 * 1000
-const redisUrl = process.env.REDIS_URL
-const redis = redisUrl ? new Redis(redisUrl, { maxRetriesPerRequest: 2, enableReadyCheck: false }) : null
 const solana = new Connection(process.env.SOLANA_RPC_URL ?? 'https://api.devnet.solana.com', 'confirmed')
 const feeReceiver = process.env.JOIN_FEE_RECEIVER ?? ''
 const whitelist = new Set((process.env.PLAYER_WHITELIST ?? '').split(',').map(value => value.trim()).filter(Boolean))
@@ -21,16 +19,16 @@ const hourlyPoolKey = (hour: number) => `dinorun:hour:${hour}:pool`
 
 async function getLeaderboard(hour = hourId()): Promise<LeaderboardRow[]> {
   if (!redis) return []
-  const rows = await redis.zrevrange(hourlyScoresKey(hour), 0, 9, 'WITHSCORES')
+  const rows = await redis.zrange<(string | number)[]>(hourlyScoresKey(hour), 0, 9, { rev: true, withScores: true })
   const result: LeaderboardRow[] = []
   for (let index = 0; index < rows.length; index += 2) {
-    result.push({ rank: result.length + 1, wallet: rows[index], score: Number(rows[index + 1]) })
+    result.push({ rank: result.length + 1, wallet: String(rows[index]), score: Number(rows[index + 1]) })
   }
   return result
 }
 
 function requireConfigured() {
-  if (!redis) throw new Error('REDIS_URL is not configured on Vercel.')
+  requireRedis()
   if (!feeReceiver) throw new Error('JOIN_FEE_RECEIVER is not configured on Vercel.')
   new PublicKey(feeReceiver)
 }
@@ -63,7 +61,7 @@ async function verifyPayment(wallet: string, signature: string) {
   const startAt = Date.now()
   const seed = Math.floor(Math.random() * 10_000) + 1
   const hour = hourId(startAt)
-  const pool = await redis!.eval(
+  const pool = await redis!.eval<string[], number>(
     `if redis.call('exists', KEYS[1]) == 1 then return -1 end
      redis.call('set', KEYS[1], ARGV[1])
      redis.call('set', KEYS[2], ARGV[2], 'EX', 3600)
@@ -72,23 +70,17 @@ async function verifyPayment(wallet: string, signature: string) {
      redis.call('expire', KEYS[3], 2592000)
      redis.call('expire', KEYS[4], 2592000)
      return total`,
-    4,
-    signatureKey,
-    `dinorun:run:${token}`,
-    hourlyPoolKey(hour),
-    hourlyScoresKey(hour),
-    wallet,
-    JSON.stringify({ wallet, startAt, seed, hour }),
-    JOIN_FEE_LAMPORTS,
+    [signatureKey, `dinorun:run:${token}`, hourlyPoolKey(hour), hourlyScoresKey(hour)],
+    [wallet, JSON.stringify({ wallet, startAt, seed, hour }), String(JOIN_FEE_LAMPORTS)],
   )
   if (Number(pool) < 0) throw new Error('This transaction was already used.')
   return { token, startAt, seed, poolLamports: Number(pool) }
 }
 
 async function submitScore(wallet: string, token: string, requestedScore: number) {
-  if (!redis) throw new Error('REDIS_URL is not configured on Vercel.')
+  const database = requireRedis()
   const key = `dinorun:run:${token}`
-  const raw = await redis.get(key)
+  const raw = await database.get<string>(key)
   if (!raw) throw new Error('This run expired or was already submitted.')
   const run = JSON.parse(raw) as { wallet: string; startAt: number; hour: number }
   if (run.wallet !== wallet) throw new Error('This run belongs to another wallet.')
@@ -96,11 +88,11 @@ async function submitScore(wallet: string, token: string, requestedScore: number
   const elapsed = Date.now() - run.startAt
   if (!Number.isFinite(score) || score < 0 || score > elapsed + 2_000 || score > 3_600_000) throw new Error('The submitted score is invalid.')
 
-  const consumed = await redis.del(key)
+  const consumed = await database.del(key)
   if (!consumed) throw new Error('This run was already submitted.')
-  await redis.multi()
-    .zadd(ALL_TIME_LEADERBOARD_KEY, 'GT', score, wallet)
-    .zadd(hourlyScoresKey(run.hour), 'GT', score, wallet)
+  await database.multi()
+    .zadd(ALL_TIME_LEADERBOARD_KEY, { gt: true }, { score, member: wallet })
+    .zadd(hourlyScoresKey(run.hour), { gt: true }, { score, member: wallet })
     .exec()
   return getLeaderboard(run.hour)
 }
@@ -115,7 +107,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
         recipient: feeReceiver,
         lamports: JOIN_FEE_LAMPORTS,
         leaderboard: await getLeaderboard(hour),
-        poolLamports: Number(await redis!.get(hourlyPoolKey(hour)) ?? 0),
+        poolLamports: Number(await redis!.get<number>(hourlyPoolKey(hour)) ?? 0),
         periodEndsAt: (hour + 1) * HOUR_MS,
         build: 'singleplayer-hourly-v2',
       })
