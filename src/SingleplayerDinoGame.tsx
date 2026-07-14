@@ -15,6 +15,7 @@ const receiverPublicKey = new PublicKey(receiverAddress)
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 const storageKey = (wallet: string) => `dinorun:local-scores:${wallet}`
 const SAFE_START_MS = 5_000
+const raceSpeed = (activeElapsed: number) => Math.min(0.72, 0.34 + activeElapsed / 105_000)
 
 function createObstacleCourse(seed: number) {
   let state = seed || 1
@@ -25,10 +26,12 @@ function createObstacleCourse(seed: number) {
   const course: number[] = []
   let position = 900
   for (let wave = 0; wave < 500; wave += 1) {
-    const triple = random() < 0.2
+    const triple = random() < 0.3
     course.push(position)
     if (triple) course.push(position + 32, position + 64)
-    position += 1_050 + random() * 550
+    // A minimum 720-unit gap still leaves enough time to land and jump again,
+    // even after the race reaches its maximum speed.
+    position += 720 + random() * 400
   }
   return course
 }
@@ -138,18 +141,18 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
       const current = Date.now()
       const elapsed = current - startAt
       const activeElapsed = Math.max(0, elapsed - SAFE_START_MS)
-      const speed = Math.min(0.55, 0.28 + activeElapsed / 180_000)
+      const speed = raceSpeed(activeElapsed)
       const travel = activeElapsed * speed
       const nextObstacleIndex = elapsed >= SAFE_START_MS ? obstacleCourse.findIndex(position => {
         const x = position - travel
-        return x > 210 && x < 300
+        return x > 225 && x < 320
       }) : -1
       if (nextObstacleIndex >= 0 && botYRef.current <= 1) {
         // The bot is flawless for the opening 30 seconds, then makes roughly
         // one deterministic mistake per 31 obstacles. It is tough but beatable.
         const botMistake = activeElapsed >= 30_000
           && (nextObstacleIndex * 97 + seed * 13) % 31 === 0
-        if (!botMistake) botVelocityRef.current = 710
+        if (!botMistake) botVelocityRef.current = 735
       }
       const playerCollision = elapsed >= SAFE_START_MS && obstacleCourse.some(position => {
         const x = position - travel
@@ -265,14 +268,14 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
 
   const elapsed = startAt ? Math.max(0, now - startAt) : 0
   const activeElapsed = Math.max(0, elapsed - SAFE_START_MS)
-  const speed = Math.min(0.55, 0.28 + activeElapsed / 180_000)
+  const speed = raceSpeed(activeElapsed)
   const travel = activeElapsed * speed
   const obstacles = elapsed < SAFE_START_MS ? [] : obstacleCourse
     .map(position => ({ position, left: 100 * (position - travel) / 900 }))
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V14</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V15</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>

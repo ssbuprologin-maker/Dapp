@@ -1,4 +1,4 @@
-# Dino Run - Dual Testnet Bot Race Build V14
+# Dino Run - Dual Testnet Bot Race Build V15
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -7,6 +7,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - Solana players pay `0.01 devnet SOL` to the configured Solana receiver.
 - MetaMask players are prompted to add or switch to MegaETH testnet, then pay `0.01 testnet ETH` to `0x4caf2B570ACF0600810fec32373880fC8b94AA18`.
 - The local bot runs ahead, survives at least the opening 30 seconds, and then has only a small deterministic mistake chance.
+- Cactus waves are closer together, triple groups appear more often, and the race accelerates to a higher top speed while retaining a safe minimum jump gap.
 - If the player crashes first, there is no payout.
 - If the bot crashes first in a Solana game, the browser submits the entry signature to `/api/payout`.
 - The Solana payout function verifies the entry transfer and sends `0.02 devnet SOL` to the player.
@@ -38,13 +39,13 @@ PAYOUT_WALLET_PRIVATE_KEY=YOUR_BASE58_DEVNET_PRIVATE_KEY
 
 `PAYOUT_WALLET_PRIVATE_KEY` must belong to the public receiver shown in the game. Add it only as a protected Vercel server variable. Do not use a `VITE_` prefix. The server rejects the key if it does not match the receiver and rejects any RPC that is not actually Solana devnet.
 
-You do not need to set `VITE_SOLANA_RPC_URL` or `SOLANA_RPC_URL`. Build V14 uses a free no-key transaction endpoint and automatically falls back to the official devnet endpoint. If free providers block balance reads, the balance displays `RPC BUSY` but play remains available; the signed entry transaction still rejects wallets that cannot cover 0.01 SOL plus the network fee.
+You do not need to set `VITE_SOLANA_RPC_URL` or `SOLANA_RPC_URL`. Build V15 uses a free no-key transaction endpoint and automatically falls back to the official devnet endpoint. If free providers block balance reads, the balance displays `RPC BUSY` but play remains available; the signed entry transaction still rejects wallets that cannot cover 0.01 SOL plus the network fee.
 
 If you later obtain a private endpoint, both RPC variables remain optional overrides and are tried before the built-in endpoints.
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V14`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V15`.
 
 ## Local development
 
