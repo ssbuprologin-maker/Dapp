@@ -3,8 +3,8 @@ import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@sol
 import { ShieldCheck } from 'lucide-react'
 import { confirmDevnetSignature, getDevnetBlockhash, sendDevnetRawTransaction } from './solanaRpc'
 
-type ScoreRow = { rank: number; score: number; playedAt: number }
-type StoredScore = { score: number; playedAt: number }
+type ScoreRow = { rank: number; score: number; playedAt: number; won: boolean }
+type StoredScore = { score: number; playedAt: number; won?: boolean }
 type Phase = 'ready' | 'running' | 'finished'
 type Winner = 'player' | 'bot' | null
 
@@ -39,7 +39,7 @@ function loadScores(wallet: string): ScoreRow[] {
       .filter(row => Number.isFinite(row.score) && Number.isFinite(row.playedAt))
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
-      .map((row, index) => ({ ...row, rank: index + 1 }))
+      .map((row, index) => ({ ...row, won: row.won === true, rank: index + 1 }))
   } catch {
     return []
   }
@@ -98,11 +98,11 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const finishGame = useCallback((score: number, raceWinner: Exclude<Winner, null>) => {
     if (finishedRef.current) return
     finishedRef.current = true
-    const next = [...loadScores(address), { rank: 0, score: Math.floor(score), playedAt: Date.now() }]
+    const next = [...loadScores(address), { rank: 0, score: Math.floor(score), playedAt: Date.now(), won: raceWinner === 'player' }]
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
       .map((row, index) => ({ ...row, rank: index + 1 }))
-    localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt }) => ({ score: savedScore, playedAt }))))
+    localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt, won }) => ({ score: savedScore, playedAt, won }))))
     setLeaderboard(next)
     setWinner(raceWinner)
     setPhase('finished')
@@ -265,7 +265,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V12</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V13</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -279,7 +279,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
-      <aside className="players-card"><div className="players-title"><div><span>THIS BROWSER</span><h2>Local high scores</h2></div><i className="online" /></div><div className="leaderboard score-board">{leaderboard.length ? leaderboard.map(row => <div key={`${row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{new Date(row.playedAt).toLocaleDateString()}</strong><em>{Math.floor(row.score / 1000)}m</em></div>) : <p>Finish a run to record your first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Stored locally</strong><span>Scores remain in this browser and are never uploaded.</span></p></div></aside>
+      <aside className="players-card"><div className="players-title"><div><span>THIS BROWSER</span><h2>Local high scores</h2></div><i className="online" /></div><div className="leaderboard score-board">{leaderboard.length ? <><div className="score-header"><b>#</b><strong>DATE</strong><em>SCORE</em><span>WIN</span></div>{leaderboard.map(row => <div key={`${row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{new Date(row.playedAt).toLocaleDateString()}</strong><em>{Math.floor(row.score / 1000)}m</em><span className={row.won ? 'win-yes' : 'win-no'}>{row.won ? 'Yes' : 'No'}</span></div>)}</> : <p>Finish a run to record your first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Stored locally</strong><span>Scores remain in this browser and are never uploaded.</span></p></div></aside>
     </div>
   </section>
 }
