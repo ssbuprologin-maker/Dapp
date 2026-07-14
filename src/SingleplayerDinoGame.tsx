@@ -7,7 +7,24 @@ type StoredScore = { score: number; playedAt: number }
 type Phase = 'ready' | 'running' | 'finished'
 
 const ENTRY_LAMPORTS = 10_000_000
-const receiverAddress = String(import.meta.env.VITE_JOIN_FEE_RECEIVER ?? '').trim()
+const rawReceiverAddress = String(import.meta.env.VITE_JOIN_FEE_RECEIVER ?? '').trim()
+const receiverAddress = rawReceiverAddress
+  .replace(/^['"]|['"]$/g, '')
+  .replace(/^solana:/i, '')
+  .split('?')[0]
+  .trim()
+const receiverConfig = (() => {
+  if (!receiverAddress) return { publicKey: null, error: 'VITE_JOIN_FEE_RECEIVER is not configured.' }
+  if (/YOUR_|WALLET_ADDRESS|PUBLIC_ADDRESS/i.test(receiverAddress)) {
+    return { publicKey: null, error: 'Replace the placeholder with the public address copied from your devnet wallet.' }
+  }
+  try {
+    const publicKey = new PublicKey(receiverAddress)
+    return { publicKey, error: '' }
+  } catch {
+    return { publicKey: null, error: 'VITE_JOIN_FEE_RECEIVER is invalid. Paste only the public Solana wallet address, without labels or spaces.' }
+  }
+})()
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 const storageKey = (wallet: string) => `dinorun:local-scores:${wallet}`
 
@@ -31,7 +48,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   onExit: () => void
 }) {
   const [phase, setPhase] = useState<Phase>('ready')
-  const [status, setStatus] = useState(receiverAddress ? 'Ready to play' : 'VITE_JOIN_FEE_RECEIVER is not configured.')
+  const [status, setStatus] = useState(receiverConfig.publicKey ? 'Ready to play' : receiverConfig.error)
   const [now, setNow] = useState(Date.now())
   const [paying, setPaying] = useState(false)
   const [paymentError, setPaymentError] = useState('')
@@ -97,11 +114,10 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     setPaying(true)
     setPaymentError('')
     try {
-      if (!receiverAddress) throw new Error('Set VITE_JOIN_FEE_RECEIVER in Vercel and redeploy.')
-      const receiver = new PublicKey(receiverAddress)
+      if (!receiverConfig.publicKey) throw new Error(receiverConfig.error)
       const transaction = new Transaction().add(SystemProgram.transfer({
         fromPubkey: new PublicKey(address),
-        toPubkey: receiver,
+        toPubkey: receiverConfig.publicKey,
         lamports: ENTRY_LAMPORTS,
       }))
 
@@ -141,7 +157,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     setY(0)
     setPaymentError('')
     setPhase('ready')
-    setStatus(receiverAddress ? 'Ready to play' : 'VITE_JOIN_FEE_RECEIVER is not configured.')
+    setStatus(receiverConfig.publicKey ? 'Ready to play' : receiverConfig.error)
   }, [])
 
   useEffect(() => {
@@ -170,7 +186,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           {obstacles.map((left, index) => <span className="cactus" key={index} style={{ left: `${left}%` }}><i /><i /><b /></span>)}
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase === 'finished' && <div className="arena-message result"><strong>Game over</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a local singleplayer run for 0.01 devnet SOL.</span>{receiverAddress && <code>Receiver: {short(receiverAddress)}</code>}{paymentError && <p>{paymentError}</p>}{!receiverAddress && <p>Set VITE_JOIN_FEE_RECEIVER in Vercel, then redeploy.</p>}<button className="join-game-button" disabled={paying || !receiverAddress} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No API or database connection is used.</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>{receiverConfig.publicKey ? 'Ready to play?' : 'Receiver address required'}</strong><span>Start a local singleplayer run for 0.01 devnet SOL.</span>{receiverConfig.publicKey && <code>Receiver: {short(receiverConfig.publicKey.toBase58())}</code>}{paymentError && <p>{paymentError}</p>}{!receiverConfig.publicKey && <p>{receiverConfig.error}</p>}<button className="join-game-button" disabled={paying || !receiverConfig.publicKey} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No API or database connection is used.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
