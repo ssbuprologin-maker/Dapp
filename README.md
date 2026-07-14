@@ -1,22 +1,20 @@
-# Devnet Dino Run
+# Devnet Dino Run - Singleplayer Build V2
 
-A Solana devnet wallet gate and singleplayer dinosaur runner with a persistent online leaderboard.
+A Solana devnet singleplayer dinosaur runner with an hourly Redis leaderboard and automated devnet prize payout.
 
-## Included
+## Current architecture
 
-- Custom Anza wallet-adapter interface for Phantom, Solflare, and Wallet Standard wallets.
-- Password-encrypted browser-local site wallets with recovery export/import.
-- A direct, non-custodial `0.01 SOL` devnet entry fee for each run.
-- Server-side confirmation and transaction replay protection.
-- Browser-based Dino Run gameplay with keyboard, mouse, and touch controls.
-- A Redis-backed leaderboard that keeps each wallet's best distance.
-- Optional wallet whitelist.
+- Gameplay and collision detection run locally in the browser.
+- Phantom, Solflare, Wallet Standard, and encrypted browser-local wallets are supported.
+- Each run costs `0.01 devnet SOL` and is signed by the player.
+- `/api/game` verifies payments, rejects reused transactions, and stores scores.
+- Redis tracks the current UTC hour's leaderboard and exact entry pool.
+- Vercel Cron calls `/api/hourly-payout` at five minutes after every hour.
+- The top wallet from the previous UTC hour receives that hour's tracked entry pool.
 
-This is a devnet game. The entry payment is a direct, non-refundable participation fee sent to the configured devnet receiver. It is not a wager or prize pool.
+The game header must say `SINGLEPLAYER DEVNET - BUILD V2`. If the deployed site shows an old realtime error, Vercel is serving an earlier commit or deployment.
 
-## Deploy to Vercel
-
-Import this Git repository into Vercel with:
+## Vercel project settings
 
 ```text
 Framework Preset: Vite
@@ -26,40 +24,42 @@ Output Directory: dist
 Install Command: npm install
 ```
 
-No WebSocket or Fluid Compute setup is needed. The game runs locally in each player's browser and uses normal Vercel API requests for payment verification and leaderboard updates.
+Push the current files to GitHub, open the Vercel project's **Deployments** tab, and redeploy the newest commit. Do not redeploy an older deployment from the list.
 
-## Add the free database
+## Redis database
 
-In the Vercel project, open **Storage** or **Marketplace**, add a Redis-compatible integration, and connect it to the project. A free Redis plan is enough for initial testing. Ensure it provides:
+Add a Redis-compatible integration from the Vercel Marketplace and connect it to the project. Ensure it creates a private `REDIS_URL` environment variable. The app uses separate Redis keys for each UTC hour and keeps the all-time best scores separately.
 
-```text
-REDIS_URL=rediss://...
-```
+## Required environment variables
 
-The leaderboard is stored in the sorted set `dinorun:leaderboard:scores:v1`. You do not host a database server yourself.
-
-## Environment variables
-
-In **Project Settings -> Environment Variables**, add these for Production and Preview:
+Add these to the Vercel Production environment:
 
 ```text
 VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
 SOLANA_RPC_URL=https://api.devnet.solana.com
-JOIN_FEE_RECEIVER=YOUR_DEVNET_FEE_WALLET
-PLAYER_WHITELIST=FIRST_WALLET_ADDRESS,SECOND_WALLET_ADDRESS
-ALLOW_ALL_PLAYERS=false
 REDIS_URL=provided-by-your-redis-integration
+JOIN_FEE_RECEIVER=PUBLIC_ADDRESS_OF_DEDICATED_DEVNET_WALLET
+PAYOUT_WALLET_SECRET_KEY=[64,SECRET,KEY,BYTES,...]
+CRON_SECRET=LONG_RANDOM_SECRET
+ALLOW_ALL_PLAYERS=true
+PLAYER_WHITELIST=
 ```
 
-`JOIN_FEE_RECEIVER` is only a public devnet wallet address. Never put a private key or recovery phrase in Vercel.
+`PAYOUT_WALLET_SECRET_KEY` must be the JSON number array for the same wallet named by `JOIN_FEE_RECEIVER`. Use a new devnet-only wallet. Never use a wallet that has held mainnet assets, and never commit its recovery data to Git.
 
-For a public game, set `ALLOW_ALL_PLAYERS=true`. To restrict access, keep it `false` and list allowed public addresses in `PLAYER_WHITELIST`, separated by commas.
+The payout function verifies all of the following before signing:
 
-After adding or changing variables, redeploy the project.
+- The RPC is actually Solana devnet.
+- The secret key matches `JOIN_FEE_RECEIVER`.
+- The request contains Vercel's `Authorization: Bearer $CRON_SECRET` header.
+- Redis has not already confirmed a payout for that hour.
+- The payout never exceeds the entry amount tracked for that hour.
+
+Keep a small amount of extra devnet SOL in the receiver wallet for transaction fees. The tracked entry pool itself is transferred to the winner.
+
+After adding the variables, trigger a new Production deployment. Vercel registers the included hourly schedule from `vercel.json`; scheduled invocations run against Production deployments.
 
 ## Local development
-
-Vite alone does not run the `/api/game` Vercel function. For the complete local app, use:
 
 ```powershell
 npm install
@@ -67,13 +67,13 @@ Copy-Item .env.example .env
 npx vercel dev
 ```
 
-## Verification
+Verify the project with:
 
 ```powershell
 npm run build
 npm run check:server
 ```
 
-## Important note
+## Limitations
 
-Payment validity and score timing are checked by the API, but the collision engine runs in the browser. This is suitable for a simple devnet game; a real-money competitive leaderboard would need server-authoritative gameplay and stronger anti-cheat controls.
+This implementation is locked to devnet. Scores are timing-checked by the API, but gameplay runs in the browser and is not strong anti-cheat protection. Do not switch this design to real-value funds without an audited on-chain escrow program, stronger game verification, and a legal review of paid-entry prize rules in the places where the game is offered.

@@ -3,7 +3,7 @@ import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@sol
 import { ShieldCheck } from 'lucide-react'
 
 type LeaderboardRow = { rank: number; wallet: string; score: number }
-type GameConfig = { recipient: string; lamports: number; leaderboard: LeaderboardRow[] }
+type GameConfig = { recipient: string; lamports: number; leaderboard: LeaderboardRow[]; poolLamports: number; periodEndsAt: number; build: string }
 type Phase = 'ready' | 'running' | 'finished'
 
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
@@ -131,6 +131,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       const body = await response.json()
       if (!response.ok) throw new Error(body.message ?? 'Payment verification failed.')
       gameToken.current = body.token
+      setConfig(current => current ? { ...current, poolLamports: body.poolLamports ?? current.poolLamports } : current)
       setSeed(body.seed)
       setStartAt(body.startAt)
       setNow(body.startAt)
@@ -175,7 +176,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const obstacles = offsets.map(offset => 100 * (900 - ((elapsed * speed + offset) % 940)) / 900)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>SINGLEPLAYER DEVNET</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>SINGLEPLAYER DEVNET - BUILD V2</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -184,11 +185,11 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           {obstacles.map((left, index) => <span className="cactus" key={index} style={{ left: `${left}%` }}><i /><i /><b /></span>)}
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase === 'finished' && <div className="arena-message result"><strong>Game over</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a singleplayer run for 0.01 devnet SOL.</span>{config?.recipient && <code>Receiver: {short(config.recipient)}</code>}{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying || !config?.recipient} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No multiplayer connection is required.</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a singleplayer run for 0.01 devnet SOL.</span>{config?.recipient && <code>Receiver: {short(config.recipient)}</code>}{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying || !config?.recipient} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>The hourly #1 score receives that hour's tracked entry pool on devnet.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
-      <aside className="players-card"><div className="players-title"><div><span>HIGH SCORES</span><h2>Leaderboard</h2></div><i className={config ? 'online' : ''} /></div><div className="leaderboard score-board">{leaderboard.length ? leaderboard.map(row => <div key={row.wallet}><b>#{row.rank}</b><strong>{row.wallet === address ? 'YOU' : short(row.wallet)}</strong><em>{Math.floor(row.score / 1000)}m</em></div>) : <p>No scores yet. Be the first.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Redis leaderboard</strong><span>Your best score is saved after each run.</span></p></div></aside>
+      <aside className="players-card"><div className="players-title"><div><span>CURRENT UTC HOUR</span><h2>{((config?.poolLamports ?? 0) / 1_000_000_000).toFixed(2)} SOL pool</h2></div><i className={config ? 'online' : ''} /></div><div className="leaderboard score-board">{leaderboard.length ? leaderboard.map(row => <div key={row.wallet}><b>#{row.rank}</b><strong>{row.wallet === address ? 'YOU' : short(row.wallet)}</strong><em>{Math.floor(row.score / 1000)}m</em></div>) : <p>No scores yet. Be the first.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Hourly devnet payout</strong><span>The top score receives the tracked pool after the hour closes.</span></p></div></aside>
     </div>
   </section>
 }
