@@ -42,8 +42,11 @@ function App() {
     try {
       const lamports = await connection.getBalance(publicKey, 'confirmed')
       setBalance(lamports / LAMPORTS_PER_SOL)
-    } catch {
-      setMessage('Could not reach Solana devnet. Try again.')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      setMessage(/429|too many requests|rate.?limit/i.test(detail)
+        ? 'Solana devnet is busy (429). Wait a minute, then refresh the balance.'
+        : 'Could not reach Solana devnet. Try again.')
     } finally { setLoadingBalance(false) }
   }, [connection, publicKey])
 
@@ -217,4 +220,3 @@ function WalletModal({ step, setStep, wallets, pendingWallet, connecting, select
 }
 
 export default App
-

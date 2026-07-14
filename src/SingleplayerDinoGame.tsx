@@ -5,6 +5,7 @@ import { ShieldCheck } from 'lucide-react'
 type ScoreRow = { rank: number; score: number; playedAt: number }
 type StoredScore = { score: number; playedAt: number }
 type Phase = 'ready' | 'running' | 'finished'
+type Winner = 'player' | 'bot' | null
 
 const ENTRY_LAMPORTS = 10_000_000
 const receiverAddress = '3aLAsDDF7JBhGGWdENyoFGP36PftRKpufHCN64myPLtN'
@@ -42,6 +43,23 @@ function loadScores(wallet: string): ScoreRow[] {
     return []
   }
 }
+
+const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
+const isRateLimit = (error: unknown) => /429|too many requests|rate.?limit/i.test(error instanceof Error ? error.message : String(error))
+
+async function retryRateLimited<T>(operation: () => Promise<T>) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try { return await operation() }
+    catch (error) {
+      lastError = error
+      if (!isRateLimit(error) || attempt === 2) throw error
+      await wait(700 * (attempt + 1))
+    }
+  }
+  throw lastError
+}
+
 export default function SingleplayerDinoGame({ address, localWallet, sendTransaction, connection, onExit }: {
   address: string
   localWallet: Keypair | null
@@ -58,8 +76,12 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const [seed, setSeed] = useState(0)
   const [startAt, setStartAt] = useState<number | null>(null)
   const [y, setY] = useState(0)
+  const [botY, setBotY] = useState(0)
+  const [winner, setWinner] = useState<Winner>(null)
   const yRef = useRef(0)
   const velocityRef = useRef(0)
+  const botYRef = useRef(0)
+  const botVelocityRef = useRef(0)
   const lastFrameRef = useRef(0)
   const finishedRef = useRef(false)
   const obstacleCourse = useMemo(() => createObstacleCourse(seed), [seed])
@@ -70,7 +92,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     if (phase === 'running' && yRef.current <= 1) velocityRef.current = 680
   }, [phase])
 
-  const finishGame = useCallback((score: number) => {
+  const finishGame = useCallback((score: number, raceWinner: Exclude<Winner, null>) => {
     if (finishedRef.current) return
     finishedRef.current = true
     const next = [...loadScores(address), { rank: 0, score: Math.floor(score), playedAt: Date.now() }]
@@ -79,8 +101,9 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       .map((row, index) => ({ ...row, rank: index + 1 }))
     localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt }) => ({ score: savedScore, playedAt }))))
     setLeaderboard(next)
+    setWinner(raceWinner)
     setPhase('finished')
-    setStatus('High score saved on this device')
+    setStatus(raceWinner === 'player' ? 'You beat the bot!' : 'The bot beat you')
   }, [address])
 
   useEffect(() => {
@@ -93,20 +116,37 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       velocityRef.current -= 1900 * delta
       yRef.current = Math.max(0, yRef.current + velocityRef.current * delta)
       if (yRef.current === 0 && velocityRef.current < 0) velocityRef.current = 0
+      botVelocityRef.current -= 1900 * delta
+      botYRef.current = Math.max(0, botYRef.current + botVelocityRef.current * delta)
+      if (botYRef.current === 0 && botVelocityRef.current < 0) botVelocityRef.current = 0
 
       const current = Date.now()
       const elapsed = current - startAt
       const activeElapsed = Math.max(0, elapsed - SAFE_START_MS)
       const speed = Math.min(0.55, 0.28 + activeElapsed / 180_000)
       const travel = activeElapsed * speed
-      const collision = elapsed >= SAFE_START_MS && obstacleCourse.some(position => {
+      const nextObstacle = elapsed >= SAFE_START_MS ? obstacleCourse.find(position => {
+        const x = position - travel
+        return x > 205 && x < 285
+      }) : undefined
+      if (nextObstacle !== undefined && botYRef.current <= 1) {
+        const botMakesJump = (Math.floor(nextObstacle) + seed * 17) % 7 !== 0
+        if (botMakesJump) botVelocityRef.current = 670
+      }
+      const playerCollision = elapsed >= SAFE_START_MS && obstacleCourse.some(position => {
         const x = position - travel
         return x > 58 && x < 116 && yRef.current < 42
       })
+      const botCollision = elapsed >= SAFE_START_MS && obstacleCourse.some(position => {
+        const x = position - travel
+        return x > 120 && x < 180 && botYRef.current < 42
+      })
 
       setY(yRef.current)
+      setBotY(botYRef.current)
       setNow(current)
-      if (collision) { finishGame(elapsed); return }
+      if (playerCollision) { finishGame(elapsed, 'bot'); return }
+      if (botCollision) { finishGame(elapsed, 'player'); return }
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
@@ -128,15 +168,16 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       }))
 
       if (localWallet) {
-        const latest = await connection.getLatestBlockhash('confirmed')
+        const latest = await retryRateLimited(() => connection.getLatestBlockhash('confirmed'))
         transaction.feePayer = localWallet.publicKey
         transaction.recentBlockhash = latest.blockhash
         transaction.sign(localWallet)
-        const signature = await connection.sendRawTransaction(transaction.serialize())
-        await connection.confirmTransaction({ signature, ...latest }, 'confirmed')
+        const serialized = transaction.serialize()
+        const signature = await retryRateLimited(() => connection.sendRawTransaction(serialized))
+        await retryRateLimited(() => connection.confirmTransaction({ signature, ...latest }, 'confirmed'))
       } else {
         const signature = await sendTransaction(transaction, connection)
-        await connection.confirmTransaction(signature, 'confirmed')
+        await retryRateLimited(() => connection.confirmTransaction(signature, 'confirmed'))
       }
 
       const started = Date.now()
@@ -145,13 +186,21 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       setNow(started)
       yRef.current = 0
       velocityRef.current = 0
+      botYRef.current = 0
+      botVelocityRef.current = 0
       finishedRef.current = false
       setY(0)
+      setBotY(0)
+      setWinner(null)
       setPhase('running')
       setStatus('Run!')
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Entry transaction failed.'
-      setPaymentError(/base58/i.test(detail) ? 'Your wallet returned invalid transaction data. Disconnect the wallet, refresh the page, reconnect, and try again.' : detail)
+      setPaymentError(/base58/i.test(detail)
+        ? 'Your wallet returned invalid transaction data. Disconnect the wallet, refresh the page, reconnect, and try again.'
+        : isRateLimit(error)
+          ? 'Solana devnet is rate-limiting requests (429). Wait a minute and retry, or set VITE_SOLANA_RPC_URL to a dedicated devnet RPC URL.'
+          : detail)
       setStatus('Ready to play')
     } finally {
       setPaying(false)
@@ -162,6 +211,8 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     finishedRef.current = false
     setStartAt(null)
     setY(0)
+    setBotY(0)
+    setWinner(null)
     setPaymentError('')
     setPhase('ready')
     setStatus('Ready to play')
@@ -187,7 +238,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>LOCAL SINGLEPLAYER - BUILD V7</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>PLAYER VS BOT - BUILD V8</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -195,8 +246,9 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           <div className="sky-line" /><div className="ground-line" />
           {obstacles.map(obstacle => <span className="cactus" key={obstacle.position} style={{ left: `${obstacle.left}%` }}><i /><i /><b /></span>)}
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
-          {phase === 'finished' && <div className="arena-message result"><strong>Game over</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a local singleplayer run for 0.01 devnet SOL.</span><code>Receiver: {short(receiverAddress)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No API or database connection is used.</small></div>}
+          {phase !== 'ready' && <><span className="dino bot-dino" style={{ transform: `translateY(-${botY}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span><span className="bot-label" style={{ transform: `translateY(-${botY}px)` }}>BOT</span></>}
+          {phase === 'finished' && <div className="arena-message result"><strong>{winner === 'player' ? 'You beat the bot!' : 'Bot wins'}</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>Race the bot</strong><span>The bot runs just ahead of you and tries to survive.</span><code>Receiver: {short(receiverAddress)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START RACE · 0.01 SOL'}</button><small>No payout is enabled. High scores stay on this device.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>

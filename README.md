@@ -1,10 +1,12 @@
-# Devnet Dino Run - Local Singleplayer Build V7
+# Devnet Dino Run - Player vs Bot Build V8
 
 A static Solana devnet dinosaur runner with browser-local high scores.
 
 ## Architecture
 
 - Gameplay and collision detection run entirely in the browser.
+- A local AI runner stays just ahead, jumps upcoming obstacles, and occasionally makes a mistake.
+- The race ends as soon as the player or bot crashes; no payout is enabled.
 - The ten highest scores for each connected wallet are stored in `localStorage` on that device.
 - No Redis, database, Vercel API function, realtime server, multiplayer connection, or cron job is used.
 - Each run sends `0.01 devnet SOL` directly to the configured public receiver address.
@@ -30,7 +32,7 @@ VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
 
 The public devnet receiver address is included directly in the static game build. No receiver environment variable is required. Never add a private key or recovery phrase to Vercel.
 
-Redeploy the newest commit. The game header must display `LOCAL SINGLEPLAYER - BUILD V7`.
+Redeploy the newest commit. The game header must display `PLAYER VS BOT - BUILD V8`.
 
 ## Local development
 
