@@ -1,11 +1,11 @@
-# Dino Run - 2X Devnet Bot Race Build V11
+# Dino Run - 2X Devnet Bot Race Build V12
 
 A Solana devnet player-versus-bot runner with browser-local scores and an intentionally insecure devnet payout prototype.
 
 ## How it works
 
 - A player pays `0.01 devnet SOL` to the configured receiver.
-- The local bot runs ahead, jumps most obstacles, and occasionally makes a mistake.
+- The local bot runs ahead, survives at least the opening 30 seconds, and then has only a small deterministic mistake chance.
 - If the player crashes first, there is no payout.
 - If the bot crashes first, the browser submits the entry signature to `/api/payout`.
 - The payout function verifies the entry transfer and sends `0.02 devnet SOL` to the player.
@@ -32,13 +32,13 @@ PAYOUT_WALLET_PRIVATE_KEY=YOUR_BASE58_DEVNET_PRIVATE_KEY
 
 `PAYOUT_WALLET_PRIVATE_KEY` must belong to the public receiver shown in the game. Add it only as a protected Vercel server variable. Do not use a `VITE_` prefix. The server rejects the key if it does not match the receiver and rejects any RPC that is not actually Solana devnet.
 
-You do not need to set `VITE_SOLANA_RPC_URL` or `SOLANA_RPC_URL`. Build V11 uses a free no-key transaction endpoint and automatically falls back to the official devnet endpoint. If free providers block balance reads, the balance displays `RPC BUSY` but play remains available; the signed entry transaction still rejects wallets that cannot cover 0.01 SOL plus the network fee.
+You do not need to set `VITE_SOLANA_RPC_URL` or `SOLANA_RPC_URL`. Build V12 uses a free no-key transaction endpoint and automatically falls back to the official devnet endpoint. If free providers block balance reads, the balance displays `RPC BUSY` but play remains available; the signed entry transaction still rejects wallets that cannot cover 0.01 SOL plus the network fee.
 
 If you later obtain a private endpoint, both RPC variables remain optional overrides and are tried before the built-in endpoints.
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `2X DEVNET BOT RACE - BUILD V11`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `2X DEVNET BOT RACE - BUILD V12`.
 
 ## Local development
 

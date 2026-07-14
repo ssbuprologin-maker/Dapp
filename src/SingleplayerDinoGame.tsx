@@ -136,13 +136,16 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       const activeElapsed = Math.max(0, elapsed - SAFE_START_MS)
       const speed = Math.min(0.55, 0.28 + activeElapsed / 180_000)
       const travel = activeElapsed * speed
-      const nextObstacle = elapsed >= SAFE_START_MS ? obstacleCourse.find(position => {
+      const nextObstacleIndex = elapsed >= SAFE_START_MS ? obstacleCourse.findIndex(position => {
         const x = position - travel
-        return x > 205 && x < 285
-      }) : undefined
-      if (nextObstacle !== undefined && botYRef.current <= 1) {
-        const botMakesJump = (Math.floor(nextObstacle) + seed * 17) % 7 !== 0
-        if (botMakesJump) botVelocityRef.current = 670
+        return x > 210 && x < 300
+      }) : -1
+      if (nextObstacleIndex >= 0 && botYRef.current <= 1) {
+        // The bot is flawless for the opening 30 seconds, then makes roughly
+        // one deterministic mistake per 31 obstacles. It is tough but beatable.
+        const botMistake = activeElapsed >= 30_000
+          && (nextObstacleIndex * 97 + seed * 13) % 31 === 0
+        if (!botMistake) botVelocityRef.current = 710
       }
       const playerCollision = elapsed >= SAFE_START_MS && obstacleCourse.some(position => {
         const x = position - travel
@@ -262,7 +265,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V11</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V12</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
