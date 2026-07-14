@@ -11,7 +11,7 @@ const endpoint = import.meta.env.VITE_SOLANA_RPC_URL || 'https://api.devnet.sola
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={[new PhantomWalletAdapter(), new SolflareWalletAdapter()]} autoConnect>
+      <WalletProvider wallets={[new PhantomWalletAdapter(), new SolflareWalletAdapter()]} autoConnect={false}>
         <App />
       </WalletProvider>
     </ConnectionProvider>

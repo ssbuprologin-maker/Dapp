@@ -16,7 +16,7 @@ import {
 
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
-const short = (value: string) => `${value.slice(0, 5)}…${value.slice(-5)}`
+const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
 type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
 
@@ -49,13 +49,6 @@ function App() {
   }, [connection, publicKey])
 
   useEffect(() => { refreshBalance() }, [refreshBalance])
-  useEffect(() => {
-    if (!pendingWallet || external.wallet?.adapter.name !== pendingWallet || external.connected || external.connecting) return
-    external.connect()
-      .then(() => { setPendingWallet(null); setModal(false) })
-      .catch(error => { setPendingWallet(null); setMessage(error instanceof Error ? error.message : 'Wallet connection failed.') })
-  }, [external, pendingWallet])
-
   const chooseExternal = (name: WalletName, readyState: WalletReadyState) => {
     if (readyState !== WalletReadyState.Installed && readyState !== WalletReadyState.Loadable) {
       setMessage(`${name} is not installed in this browser.`)
@@ -64,6 +57,20 @@ function App() {
     setLocalWallet(null)
     external.select(name)
     setPendingWallet(name)
+  }
+
+  const connectExternal = async () => {
+    if (!pendingWallet || external.wallet?.adapter.name !== pendingWallet) {
+      setMessage('Select a wallet and try again.')
+      return
+    }
+    try {
+      await external.connect()
+      setPendingWallet(null)
+      setModal(false)
+    } catch (error) {
+      setMessage(error instanceof Error && error.message ? error.message : `Could not connect ${pendingWallet}. Check that the extension is unlocked and try again.`)
+    }
   }
 
   const activateSiteWallet = async (wallet: Keypair) => {
@@ -121,8 +128,11 @@ function App() {
       setStep={setStep}
       wallets={external.wallets}
       pendingWallet={pendingWallet}
+      connecting={external.connecting}
+      selectedReady={Boolean(pendingWallet && external.wallet?.adapter.name === pendingWallet)}
       stored={hasStoredWallet()}
       onExternal={chooseExternal}
+      onConnectExternal={connectExternal}
       onClose={() => setModal(false)}
       onCreated={async (wallet) => { await activateSiteWallet(wallet); setStep('backup') }}
       onUnlocked={async wallet => { await activateSiteWallet(wallet); setModal(false) }}
@@ -210,7 +220,7 @@ function DinoGame({ address, localWallet, signMessage, sendTransaction, connecti
       } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not sign in.') }
     })
     socket.on('authenticated', () => setStatus('Wallet verified'))
-    socket.on('payment_required', (request: PaymentRequest) => { setPayment(request); setPaymentError(''); setStatus('Entry fee required') })
+    socket.on('payment_required', (request: PaymentRequest) => { setPayment(request); setPaymentError(''); setStatus('Ready to join') })
     socket.on('payment_error', ({ message }: { message: string }) => { setPaymentError(message); setPaying(false) })
     socket.on('admitted', ({ spectator: watching }: { spectator?: boolean }) => {
       setPayment(null); setPaying(false); setSpectator(Boolean(watching)); setStatus(watching ? 'Round in progress - spectating' : 'Entry confirmed')
@@ -286,7 +296,7 @@ function DinoGame({ address, localWallet, signMessage, sendTransaction, connecti
           {(!game || game.phase === 'lobby') && <div className="arena-message"><strong>Waiting for players</strong><span>At least two whitelisted wallets are needed</span></div>}
           {game?.phase === 'countdown' && <div className="countdown">{countdown || 'RUN!'}</div>}
           {game?.phase === 'finished' && <div className="arena-message result"><strong>{game.winner === address ? 'You are the last standing!' : game.winner ? `${short(game.winner)} wins` : 'Nobody survived'}</strong><span>Final round result</span><button onClick={event => { event.stopPropagation(); socketRef.current?.emit('play_again') }}>Play again</button></div>}
-          {payment && <div className="arena-message payment-message"><strong>0.01 SOL to enter</strong><span>One direct, non-custodial devnet transfer for this round.</span><code>{short(payment.recipient)}</code>{paymentError && <p>{paymentError}</p>}<button disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'Confirming...' : 'Pay and join'}</button></div>}
+          {payment && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Joining this round costs 0.01 devnet SOL. Your wallet will ask you to confirm.</span><code>Receiver: {short(payment.recipient)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'JOIN GAME · 0.01 SOL'}</button><small>Entering the dApp is free. The transaction happens only when you click Join Game.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{spectator ? 'You joined late and are spectating this round.' : status}</p></div>
       </div>
@@ -295,9 +305,9 @@ function DinoGame({ address, localWallet, signMessage, sendTransaction, connecti
   </section>
 }
 
-function WalletModal({ step, setStep, wallets, pendingWallet, stored, onExternal, onClose, onCreated, onUnlocked }: {
-  step: ModalStep; setStep: (step: ModalStep) => void; wallets: ReturnType<typeof useWallet>['wallets']; pendingWallet: WalletName | null; stored: boolean;
-  onExternal: (name: WalletName, state: WalletReadyState) => void; onClose: () => void; onCreated: (wallet: Keypair) => Promise<void>; onUnlocked: (wallet: Keypair) => Promise<void>;
+function WalletModal({ step, setStep, wallets, pendingWallet, connecting, selectedReady, stored, onExternal, onConnectExternal, onClose, onCreated, onUnlocked }: {
+  step: ModalStep; setStep: (step: ModalStep) => void; wallets: ReturnType<typeof useWallet>['wallets']; pendingWallet: WalletName | null; connecting: boolean; selectedReady: boolean; stored: boolean;
+  onExternal: (name: WalletName, state: WalletReadyState) => void; onConnectExternal: () => void; onClose: () => void; onCreated: (wallet: Keypair) => Promise<void>; onUnlocked: (wallet: Keypair) => Promise<void>;
 }) {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -333,7 +343,7 @@ function WalletModal({ step, setStep, wallets, pendingWallet, stored, onExternal
 
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={event => event.stopPropagation()}><button className="close" onClick={onClose}><X /></button>
     {step !== 'choose' && step !== 'backup' && <button className="back" onClick={() => { setError(''); setStep('choose') }}>← Back</button>}
-    {step === 'choose' && <><div className="modal-title"><span><Wallet /></span><div><h2>Connect wallet</h2><p>Choose how you want to continue.</p></div></div><div className="wallet-list">{visibleWallets.map(item => <button key={item.adapter.name} onClick={() => onExternal(item.adapter.name, item.readyState)}><img src={item.adapter.icon} alt="" /><div><strong>{item.adapter.name}</strong><small>{item.readyState === WalletReadyState.Installed ? 'Detected' : item.readyState}</small></div>{pendingWallet === item.adapter.name ? <LoaderCircle className="spin" /> : <ChevronRight />}</button>)}</div><div className="divider"><span>OR</span></div>{stored ? <button className="site-option" onClick={() => setStep('unlock')}><span><LockKeyhole /></span><div><strong>Unlock site wallet</strong><small>An encrypted wallet exists on this device</small></div><ChevronRight /></button> : <button className="site-option" onClick={() => setStep('create')}><span><KeyRound /></span><div><strong>Create a site wallet</strong><small>Encrypted and stored only in this browser</small></div><ChevronRight /></button>}</>}
+    {step === 'choose' && <><div className="modal-title"><span><Wallet /></span><div><h2>Connect wallet</h2><p>Select an installed wallet, then approve the connection.</p></div></div><div className="wallet-list">{visibleWallets.map(item => <button className={pendingWallet === item.adapter.name ? 'selected' : ''} key={item.adapter.name} onClick={() => onExternal(item.adapter.name, item.readyState)}><img src={item.adapter.icon} alt="" /><div><strong>{item.adapter.name}</strong><small>{item.readyState === WalletReadyState.Installed ? 'Detected' : item.readyState}</small></div>{pendingWallet === item.adapter.name ? <Check /> : <ChevronRight />}</button>)}</div>{pendingWallet && <button className="primary external-connect" disabled={!selectedReady || connecting} onClick={onConnectExternal}>{connecting ? <><LoaderCircle className="spin" /> CONNECTING...</> : <>CONNECT {pendingWallet.toUpperCase()} <ArrowRight /></>}</button>}<div className="divider"><span>OR</span></div>{stored ? <button className="site-option" onClick={() => setStep('unlock')}><span><LockKeyhole /></span><div><strong>Unlock site wallet</strong><small>An encrypted wallet exists on this device</small></div><ChevronRight /></button> : <button className="site-option" onClick={() => setStep('create')}><span><KeyRound /></span><div><strong>Create a site wallet</strong><small>Encrypted and stored only in this browser</small></div><ChevronRight /></button>}</>}
     {step === 'create' && <form onSubmit={create}><div className="form-icon"><KeyRound /></div><h2>Create site wallet</h2><p>A new Solana keypair will be encrypted with your password and stored in this browser.</p><label>PASSWORD<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 10 characters" autoFocus /></label><label>CONFIRM PASSWORD<input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} /></label>{error && <div className="form-error"><AlertTriangle />{error}</div>}<button className="primary" disabled={busy}>{busy ? 'CREATING…' : 'CREATE WALLET'} <ArrowRight /></button></form>}
     {step === 'unlock' && <form onSubmit={unlock}><div className="form-icon"><LockKeyhole /></div><h2>Unlock site wallet</h2><p>Your password decrypts the wallet locally. It is never transmitted.</p><label>PASSWORD<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoFocus /></label>{error && <div className="form-error"><AlertTriangle />{error}</div>}<button className="primary" disabled={busy}>{busy ? 'UNLOCKING…' : 'UNLOCK WALLET'} <ArrowRight /></button><label className="import-button">IMPORT RECOVERY FILE<input type="file" accept="application/json" onChange={e => importFile(e.target.files?.[0])} /></label></form>}
     {step === 'backup' && createdWallet && <div className="backup"><span className="warning-mark"><AlertTriangle /></span><h2>Back up your wallet now</h2><p>This is the only recovery copy. If browser storage is cleared and you do not have it, the wallet cannot be recovered.</p><div className="address-box"><small>PUBLIC ADDRESS</small><code>{createdWallet.publicKey.toBase58()}</code></div><button className="primary" onClick={() => exportRecovery(createdWallet)}><Download /> DOWNLOAD RECOVERY FILE</button><button className="text-button" onClick={onClose}>I saved it — continue</button></div>}
