@@ -127,14 +127,9 @@ function App() {
 function Landing({ onConnect }: { onConnect: () => void }) {
   return <section className="landing">
     <div className="badge"><Sparkles /> SECURE DEVNET ACCESS</div>
-    <h1>Your wallet.<br /><em>Your way in.</em></h1>
+    <h1><em>Sign up.</em></h1>
     <p>Connect an existing Solana wallet or create an encrypted site wallet directly in your browser.</p>
     <button className="hero-button" onClick={onConnect}><Wallet /> CONNECT WALLET <ArrowRight /></button>
-    <div className="requirements">
-      <article><span>01</span><ShieldCheck /><div><strong>Non-custodial</strong><p>Your keys stay with you.</p></div></article>
-      <article><span>02</span><LockKeyhole /><div><strong>Balance gate</strong><p>Hold at least 0.1 devnet SOL.</p></div></article>
-      <article><span>03</span><KeyRound /><div><strong>Wallet Standard</strong><p>Compatible wallets are detected.</p></div></article>
-    </div>
   </section>
 }
 
