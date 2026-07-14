@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ShieldCheck } from 'lucide-react'
 import { confirmDevnetSignature, getDevnetBlockhash, sendDevnetRawTransaction } from './solanaRpc'
-import { MEGAETH_RECEIVER, sendMegaEthEntry } from './megaEth'
+import { MEGAETH_EXPLORER_URL, MEGAETH_RECEIVER, sendMegaEthEntry } from './megaEth'
 
-type ScoreRow = { rank: number; score: number; playedAt: number; won: boolean }
-type StoredScore = { score: number; playedAt: number; won?: boolean }
+type PaymentNetwork = 'solana' | 'megaeth'
+type ScoreRow = { rank: number; score: number; playedAt: number; won: boolean; transaction?: string; network?: PaymentNetwork }
+type StoredScore = { score: number; playedAt: number; won?: boolean; transaction?: string; network?: PaymentNetwork }
 type Phase = 'ready' | 'running' | 'finished'
 type Winner = 'player' | 'bot' | null
 
@@ -43,7 +44,13 @@ function loadScores(wallet: string): ScoreRow[] {
       .filter(row => Number.isFinite(row.score) && Number.isFinite(row.playedAt))
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
-      .map((row, index) => ({ ...row, won: row.won === true, rank: index + 1 }))
+      .map((row, index) => ({
+        ...row,
+        won: row.won === true,
+        transaction: typeof row.transaction === 'string' ? row.transaction : undefined,
+        network: row.network === 'solana' || row.network === 'megaeth' ? row.network : undefined,
+        rank: index + 1,
+      }))
   } catch {
     return []
   }
@@ -67,7 +74,7 @@ async function claimDevnetPayout(wallet: string, entrySignature: string) {
 
 export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, onExit }: {
   address: string
-  paymentNetwork: 'solana' | 'megaeth'
+  paymentNetwork: PaymentNetwork
   localWallet: Keypair | null
   sendTransaction: (transaction: Transaction, connection: Connection) => Promise<string>
   signTransaction?: (transaction: Transaction) => Promise<Transaction>
@@ -103,11 +110,18 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const finishGame = useCallback((score: number, raceWinner: Exclude<Winner, null>) => {
     if (finishedRef.current) return
     finishedRef.current = true
-    const next = [...loadScores(address), { rank: 0, score: Math.floor(score), playedAt: Date.now(), won: raceWinner === 'player' }]
+    const next = [...loadScores(address), {
+      rank: 0,
+      score: Math.floor(score),
+      playedAt: Date.now(),
+      won: raceWinner === 'player',
+      transaction: entrySignatureRef.current,
+      network: paymentNetwork,
+    }]
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
       .map((row, index) => ({ ...row, rank: index + 1 }))
-    localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt, won }) => ({ score: savedScore, playedAt, won }))))
+    localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt, won, transaction, network }) => ({ score: savedScore, playedAt, won, transaction, network }))))
     setLeaderboard(next)
     setWinner(raceWinner)
     setPhase('finished')
@@ -275,21 +289,21 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V15</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V17</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
         <button className="dino-stage" onClick={jump} aria-label="Jump">
           <div className="sky-line" /><div className="ground-line" />
           {obstacles.map(obstacle => <span className="cactus" key={obstacle.position} style={{ left: `${obstacle.left}%` }}><i /><i /><b /></span>)}
-          {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
-          {phase !== 'ready' && <><span className="dino bot-dino" style={{ transform: `translateY(-${botY}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span><span className="bot-label" style={{ transform: `translateY(-${botY}px)` }}>BOT</span></>}
+          {phase !== 'ready' && <span className={`dino ${phase === 'running' ? 'is-running' : ''}`} style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
+          {phase !== 'ready' && <><span className={`dino bot-dino ${phase === 'running' ? 'is-running' : ''}`} style={{ transform: `translateY(-${botY}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span><span className="bot-label" style={{ transform: `translateY(-${botY}px)` }}>BOT</span></>}
           {phase === 'finished' && <div className="arena-message result"><strong>{winner === 'player' ? 'You beat the bot!' : 'Bot wins'}</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
           {phase === 'ready' && <div className="arena-message payment-message"><strong>{paymentNetwork === 'solana' ? 'Race the bot for 2x' : 'Race the bot on MegaETH'}</strong><span>{paymentNetwork === 'solana' ? 'Pay 0.01 devnet SOL. Beat the bot to receive 0.02.' : 'Pay 0.01 MegaETH testnet ETH. Wins are recorded locally.'}</span><code>Receiver: {short(paymentNetwork === 'solana' ? receiverAddress : MEGAETH_RECEIVER)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : `START RACE · 0.01 ${paymentNetwork === 'solana' ? 'SOL' : 'ETH'}`}</button><small>{paymentNetwork === 'solana' ? 'Devnet prototype. The browser reports the winner to the payout function.' : 'MegaETH testnet entry. MetaMask confirms the payment and network.'}</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
-      <aside className="players-card"><div className="players-title"><div><span>THIS BROWSER</span><h2>Local high scores</h2></div><i className="online" /></div><div className="leaderboard score-board">{leaderboard.length ? <><div className="score-header"><b>#</b><strong>DATE</strong><em>SCORE</em><span>WIN</span></div>{leaderboard.map(row => <div key={`${row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{new Date(row.playedAt).toLocaleDateString()}</strong><em>{Math.floor(row.score / 1000)}m</em><span className={row.won ? 'win-yes' : 'win-no'}>{row.won ? 'Yes' : 'No'}</span></div>)}</> : <p>Finish a run to record your first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Stored locally</strong><span>Scores remain in this browser and are never uploaded.</span></p></div></aside>
+      <aside className="players-card"><div className="players-title"><div><span>THIS BROWSER</span><h2>Local high scores</h2></div><i className="online" /></div><div className="leaderboard score-board">{leaderboard.length ? <><div className="score-header"><b>#</b><strong>DATE</strong><em>SCORE</em><span>WIN</span><i>TX</i></div>{leaderboard.map(row => <div key={`${row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{new Date(row.playedAt).toLocaleDateString()}</strong><em>{Math.floor(row.score / 1000)}m</em><span className={row.won ? 'win-yes' : 'win-no'}>{row.won ? 'Yes' : 'No'}</span>{row.transaction && row.network ? <a href={row.network === 'solana' ? `https://explorer.solana.com/tx/${row.transaction}?cluster=devnet` : `${MEGAETH_EXPLORER_URL}/tx/${row.transaction}`} target="_blank" rel="noreferrer" title={`Open ${row.network === 'solana' ? 'Solana Explorer' : 'MegaETH Blockscout'}`}>View</a> : <i>—</i>}</div>)}</> : <p>Finish a run to record your first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Stored locally</strong><span>Scores and entry transaction links remain in this browser.</span></p></div></aside>
     </div>
   </section>
 }

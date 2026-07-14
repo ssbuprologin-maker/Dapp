@@ -147,7 +147,7 @@ function App() {
 
   return <div className="shell">
     <header>
-      <a className="logo" href="/"><span><i /><i /><i /></span>DEVNET GATE</a>
+      <a className="logo" href="/"><span><i /><i /><i /></span>TESTNET GAMES</a>
       <div className="network"><i /> {isMegaEth ? 'MEGAETH TESTNET' : 'SOLANA DEVNET'}</div>
     </header>
 

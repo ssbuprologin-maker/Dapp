@@ -1,6 +1,7 @@
 import { Keypair } from '@solana/web3.js'
 
-const STORAGE_KEY = 'devnet-gate.encrypted-wallet.v1'
+const STORAGE_KEY = 'testnet-games.encrypted-wallet.v1'
+const LEGACY_STORAGE_KEY = 'devnet-gate.encrypted-wallet.v1'
 const encoder = new TextEncoder()
 
 type EncryptedWallet = { version: 1; salt: string; iv: string; cipher: string; publicKey: string }
@@ -24,7 +25,7 @@ async function passwordKey(password: string, salt: Uint8Array, usage: KeyUsage[]
   )
 }
 
-export const hasStoredWallet = () => Boolean(localStorage.getItem(STORAGE_KEY))
+export const hasStoredWallet = () => Boolean(localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY))
 
 export async function createEncryptedWallet(password: string) {
   if (password.length < 10) throw new Error('Use at least 10 characters.')
@@ -47,10 +48,12 @@ export async function storeWallet(wallet: Keypair, password: string) {
     publicKey: wallet.publicKey.toBase58(),
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(record))
+  localStorage.removeItem(LEGACY_STORAGE_KEY)
 }
 
 export async function unlockStoredWallet(password: string) {
-  const raw = localStorage.getItem(STORAGE_KEY)
+  const current = localStorage.getItem(STORAGE_KEY)
+  const raw = current ?? localStorage.getItem(LEGACY_STORAGE_KEY)
   if (!raw) throw new Error('No site wallet exists in this browser.')
   try {
     const record = JSON.parse(raw) as EncryptedWallet
@@ -58,7 +61,9 @@ export async function unlockStoredWallet(password: string) {
     const iv = base64ToBytes(record.iv)
     const key = await passwordKey(password, salt, ['decrypt'])
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, base64ToBytes(record.cipher))
-    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(new TextDecoder().decode(plain)) as number[]))
+    const wallet = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(new TextDecoder().decode(plain)) as number[]))
+    if (!current) await storeWallet(wallet, password)
+    return wallet
   } catch {
     throw new Error('Incorrect password or damaged wallet data.')
   }
@@ -73,11 +78,12 @@ export function exportRecovery(wallet: Keypair) {
   const url = URL.createObjectURL(new Blob([contents], { type: 'application/json' }))
   const link = document.createElement('a')
   link.href = url
-  link.download = `devnet-wallet-${wallet.publicKey.toBase58().slice(0, 8)}.json`
+  link.download = `testnet-games-solana-wallet-${wallet.publicKey.toBase58().slice(0, 8)}.json`
   link.click()
   URL.revokeObjectURL(url)
 }
 
 export function forgetStoredWallet() {
   localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(LEGACY_STORAGE_KEY)
 }
