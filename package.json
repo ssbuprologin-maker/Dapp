@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "check:server": "tsc api/payout.ts api/leaderboard.ts --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck",
+    "check:server": "tsc api/payout.ts api/leaderboard.ts api/analytics.ts --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck",
     "preview": "vite preview",
     "vercel:dev": "vercel dev"
   },

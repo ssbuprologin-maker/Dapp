@@ -124,11 +124,21 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const obstacleCourse = useMemo(() => createObstacleCourse(seed), [seed])
 
   useEffect(() => {
+    let active = true
     setLeaderboard(loadScores(address))
     setLeaderboardMode('local')
-    void worldwideLeaderboard()
-      .then(scores => { setLeaderboard(scores); setLeaderboardMode('worldwide') })
-      .catch(() => { /* Local scores remain available until Redis is configured. */ })
+    const refreshWorldwide = () => {
+      void worldwideLeaderboard()
+        .then(scores => {
+          if (!active) return
+          setLeaderboard(scores)
+          setLeaderboardMode('worldwide')
+        })
+        .catch(() => { /* Local scores remain available until Redis is configured. */ })
+    }
+    refreshWorldwide()
+    const timer = window.setInterval(refreshWorldwide, 15_000)
+    return () => { active = false; window.clearInterval(timer) }
   }, [address])
 
   const jump = useCallback(() => {
@@ -340,7 +350,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V18</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V20</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
