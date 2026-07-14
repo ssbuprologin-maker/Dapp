@@ -1,4 +1,4 @@
-# Devnet Dino Run - Local Singleplayer Build V5
+# Devnet Dino Run - Local Singleplayer Build V6
 
 A static Solana devnet dinosaur runner with browser-local high scores.
 
@@ -22,16 +22,15 @@ Output Directory: dist
 Install Command: npm install
 ```
 
-## Required Vercel variables
+## Vercel variable
 
 ```text
 VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
-VITE_JOIN_FEE_RECEIVER=YOUR_PUBLIC_DEVNET_WALLET_ADDRESS
 ```
 
-`VITE_JOIN_FEE_RECEIVER` is public browser configuration. Never add a private key or recovery phrase. The build also accepts the old `JOIN_FEE_RECEIVER` name as a temporary fallback, but `VITE_JOIN_FEE_RECEIVER` is preferred.
+The public devnet receiver address is included directly in the static game build. No receiver environment variable is required. Never add a private key or recovery phrase to Vercel.
 
-After setting the variables, redeploy the newest commit. The game header must display `LOCAL SINGLEPLAYER - BUILD V5`.
+Redeploy the newest commit. The game header must display `LOCAL SINGLEPLAYER - BUILD V6`.
 
 ## Local development
 

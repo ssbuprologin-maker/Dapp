@@ -7,24 +7,8 @@ type StoredScore = { score: number; playedAt: number }
 type Phase = 'ready' | 'running' | 'finished'
 
 const ENTRY_LAMPORTS = 10_000_000
-const rawReceiverAddress = String(import.meta.env.VITE_JOIN_FEE_RECEIVER ?? '').trim()
-const receiverAddress = rawReceiverAddress
-  .replace(/^['"]|['"]$/g, '')
-  .replace(/^solana:/i, '')
-  .split('?')[0]
-  .trim()
-const receiverConfig = (() => {
-  if (!receiverAddress) return { publicKey: null, error: 'VITE_JOIN_FEE_RECEIVER is not configured.' }
-  if (/YOUR_|WALLET_ADDRESS|PUBLIC_ADDRESS/i.test(receiverAddress)) {
-    return { publicKey: null, error: 'Replace the placeholder with the public address copied from your devnet wallet.' }
-  }
-  try {
-    const publicKey = new PublicKey(receiverAddress)
-    return { publicKey, error: '' }
-  } catch {
-    return { publicKey: null, error: 'VITE_JOIN_FEE_RECEIVER is invalid. Paste only the public Solana wallet address, without labels or spaces.' }
-  }
-})()
+const receiverAddress = '3aLAsDDF7JBhGGWdENyoFGP36PftRKpufHCN64myPLtN'
+const receiverPublicKey = new PublicKey(receiverAddress)
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 const storageKey = (wallet: string) => `dinorun:local-scores:${wallet}`
 
@@ -48,7 +32,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   onExit: () => void
 }) {
   const [phase, setPhase] = useState<Phase>('ready')
-  const [status, setStatus] = useState(receiverConfig.publicKey ? 'Ready to play' : receiverConfig.error)
+  const [status, setStatus] = useState('Ready to play')
   const [now, setNow] = useState(Date.now())
   const [paying, setPaying] = useState(false)
   const [paymentError, setPaymentError] = useState('')
@@ -114,10 +98,12 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     setPaying(true)
     setPaymentError('')
     try {
-      if (!receiverConfig.publicKey) throw new Error(receiverConfig.error)
+      let playerPublicKey: PublicKey
+      try { playerPublicKey = new PublicKey(address) }
+      catch { throw new Error('The connected wallet returned an invalid public address. Disconnect it, refresh, and reconnect.') }
       const transaction = new Transaction().add(SystemProgram.transfer({
-        fromPubkey: new PublicKey(address),
-        toPubkey: receiverConfig.publicKey,
+        fromPubkey: playerPublicKey,
+        toPubkey: receiverPublicKey,
         lamports: ENTRY_LAMPORTS,
       }))
 
@@ -144,7 +130,8 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       setPhase('running')
       setStatus('Run!')
     } catch (error) {
-      setPaymentError(error instanceof Error ? error.message : 'Entry transaction failed.')
+      const detail = error instanceof Error ? error.message : 'Entry transaction failed.'
+      setPaymentError(/base58/i.test(detail) ? 'Your wallet returned invalid transaction data. Disconnect the wallet, refresh the page, reconnect, and try again.' : detail)
       setStatus('Ready to play')
     } finally {
       setPaying(false)
@@ -157,7 +144,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     setY(0)
     setPaymentError('')
     setPhase('ready')
-    setStatus(receiverConfig.publicKey ? 'Ready to play' : receiverConfig.error)
+    setStatus('Ready to play')
   }, [])
 
   useEffect(() => {
@@ -177,7 +164,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const obstacles = offsets.map(offset => 100 * (900 - ((elapsed * speed + offset) % 940)) / 900)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>LOCAL SINGLEPLAYER - BUILD V5</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>LOCAL SINGLEPLAYER - BUILD V6</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -186,7 +173,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           {obstacles.map((left, index) => <span className="cactus" key={index} style={{ left: `${left}%` }}><i /><i /><b /></span>)}
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase === 'finished' && <div className="arena-message result"><strong>Game over</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>{receiverConfig.publicKey ? 'Ready to play?' : 'Receiver address required'}</strong><span>Start a local singleplayer run for 0.01 devnet SOL.</span>{receiverConfig.publicKey && <code>Receiver: {short(receiverConfig.publicKey.toBase58())}</code>}{paymentError && <p>{paymentError}</p>}{!receiverConfig.publicKey && <p>{receiverConfig.error}</p>}<button className="join-game-button" disabled={paying || !receiverConfig.publicKey} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No API or database connection is used.</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a local singleplayer run for 0.01 devnet SOL.</span><code>Receiver: {short(receiverAddress)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No API or database connection is used.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
