@@ -60,6 +60,20 @@ async function retryRateLimited<T>(operation: () => Promise<T>) {
   throw lastError
 }
 
+async function claimDevnetPayout(wallet: string, entrySignature: string) {
+  const response = await fetch('/api/payout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ wallet, entrySignature }),
+  })
+  const text = await response.text()
+  let body: { message?: string; payoutSignature?: string; amount?: number }
+  try { body = JSON.parse(text) as typeof body }
+  catch { throw new Error(`Payout service unavailable (${response.status}).`) }
+  if (!response.ok) throw new Error(body.message ?? 'Payout failed.')
+  return body
+}
+
 export default function SingleplayerDinoGame({ address, localWallet, sendTransaction, connection, onExit }: {
   address: string
   localWallet: Keypair | null
@@ -84,6 +98,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const botVelocityRef = useRef(0)
   const lastFrameRef = useRef(0)
   const finishedRef = useRef(false)
+  const entrySignatureRef = useRef('')
   const obstacleCourse = useMemo(() => createObstacleCourse(seed), [seed])
 
   useEffect(() => { setLeaderboard(loadScores(address)) }, [address])
@@ -103,7 +118,15 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     setLeaderboard(next)
     setWinner(raceWinner)
     setPhase('finished')
-    setStatus(raceWinner === 'player' ? 'You beat the bot!' : 'The bot beat you')
+    if (raceWinner === 'player' && entrySignatureRef.current) {
+      const paidEntry = entrySignatureRef.current
+      setStatus('You beat the bot! Requesting 0.02 SOL devnet payout...')
+      void claimDevnetPayout(address, paidEntry)
+        .then(result => setStatus(`2x payout sent: ${short(result.payoutSignature ?? '')}`))
+        .catch(error => setStatus(error instanceof Error ? `Payout error: ${error.message}` : 'Payout failed.'))
+    } else {
+      setStatus('The bot beat you')
+    }
   }, [address])
 
   useEffect(() => {
@@ -167,20 +190,22 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
         lamports: ENTRY_LAMPORTS,
       }))
 
+      let entrySignature: string
       if (localWallet) {
         const latest = await retryRateLimited(() => connection.getLatestBlockhash('confirmed'))
         transaction.feePayer = localWallet.publicKey
         transaction.recentBlockhash = latest.blockhash
         transaction.sign(localWallet)
         const serialized = transaction.serialize()
-        const signature = await retryRateLimited(() => connection.sendRawTransaction(serialized))
-        await retryRateLimited(() => connection.confirmTransaction({ signature, ...latest }, 'confirmed'))
+        entrySignature = await retryRateLimited(() => connection.sendRawTransaction(serialized))
+        await retryRateLimited(() => connection.confirmTransaction({ signature: entrySignature, ...latest }, 'confirmed'))
       } else {
-        const signature = await sendTransaction(transaction, connection)
-        await retryRateLimited(() => connection.confirmTransaction(signature, 'confirmed'))
+        entrySignature = await sendTransaction(transaction, connection)
+        await retryRateLimited(() => connection.confirmTransaction(entrySignature, 'confirmed'))
       }
 
       const started = Date.now()
+      entrySignatureRef.current = entrySignature
       setSeed(Math.floor(Math.random() * 10_000) + 1)
       setStartAt(started)
       setNow(started)
@@ -209,6 +234,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
 
   const reset = useCallback(() => {
     finishedRef.current = false
+    entrySignatureRef.current = ''
     setStartAt(null)
     setY(0)
     setBotY(0)
@@ -238,7 +264,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>PLAYER VS BOT - BUILD V8</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V9</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -248,7 +274,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase !== 'ready' && <><span className="dino bot-dino" style={{ transform: `translateY(-${botY}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span><span className="bot-label" style={{ transform: `translateY(-${botY}px)` }}>BOT</span></>}
           {phase === 'finished' && <div className="arena-message result"><strong>{winner === 'player' ? 'You beat the bot!' : 'Bot wins'}</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>Race the bot</strong><span>The bot runs just ahead of you and tries to survive.</span><code>Receiver: {short(receiverAddress)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START RACE · 0.01 SOL'}</button><small>No payout is enabled. High scores stay on this device.</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>Race the bot for 2x</strong><span>Pay 0.01 devnet SOL. Beat the bot to receive 0.02.</span><code>Receiver: {short(receiverAddress)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START 2X RACE · 0.01 SOL'}</button><small>Devnet prototype. The browser reports the winner to the payout function.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>

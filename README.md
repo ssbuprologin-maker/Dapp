@@ -1,18 +1,18 @@
-# Devnet Dino Run - Player vs Bot Build V8
+# Dino Run - 2X Devnet Bot Race Build V9
 
-A static Solana devnet dinosaur runner with browser-local high scores.
+A Solana devnet player-versus-bot runner with browser-local scores and an intentionally insecure devnet payout prototype.
 
-## Architecture
+## How it works
 
-- Gameplay and collision detection run entirely in the browser.
-- A local AI runner stays just ahead, jumps upcoming obstacles, and occasionally makes a mistake.
-- The race ends as soon as the player or bot crashes; no payout is enabled.
-- The ten highest scores for each connected wallet are stored in `localStorage` on that device.
-- No Redis, database, Vercel API function, realtime server, multiplayer connection, or cron job is used.
-- Each run sends `0.01 devnet SOL` directly to the configured public receiver address.
-- Phantom, Solflare, Wallet Standard, and encrypted browser-local wallets are supported.
+- A player pays `0.01 devnet SOL` to the configured receiver.
+- The local bot runs ahead, jumps most obstacles, and occasionally makes a mistake.
+- If the player crashes first, there is no payout.
+- If the bot crashes first, the browser submits the entry signature to `/api/payout`.
+- The payout function verifies the entry transfer and sends `0.02 devnet SOL` to the player.
+- A Solana memo is added to payout transactions to reduce reuse of an entry signature.
+- Personal high scores stay in browser `localStorage`.
 
-Because there is no server, payment confirmation is performed by the player's wallet and browser. This is intended only for devnet testing.
+This is devnet-only. The browser reports who won, so a user can fake a winning result. Duplicate protection is also best-effort without a database. Never point this prototype at mainnet or a wallet containing real assets.
 
 ## Vercel project settings
 
@@ -24,26 +24,35 @@ Output Directory: dist
 Install Command: npm install
 ```
 
-## Vercel variable
+## Required Vercel environment variables
 
 ```text
 VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
+SOLANA_RPC_URL=https://api.devnet.solana.com
+PAYOUT_WALLET_PRIVATE_KEY=YOUR_BASE58_DEVNET_PRIVATE_KEY
 ```
 
-The public devnet receiver address is included directly in the static game build. No receiver environment variable is required. Never add a private key or recovery phrase to Vercel.
+`PAYOUT_WALLET_PRIVATE_KEY` must belong to the public receiver shown in the game. Add it only as a protected Vercel server variable. Do not use a `VITE_` prefix. The server rejects the key if it does not match the receiver and rejects any RPC that is not actually Solana devnet.
 
-Redeploy the newest commit. The game header must display `PLAYER VS BOT - BUILD V8`.
+The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
+
+The public Solana devnet RPC may return HTTP 429 under load. For reliable testing, replace both RPC variables with the same dedicated devnet RPC provider URL.
+
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `2X DEVNET BOT RACE - BUILD V9`.
 
 ## Local development
 
 ```powershell
 npm install
 Copy-Item .env.example .env
-npm run dev
+npx vercel dev
 ```
 
-Verify with:
+`npm run dev` runs only the static frontend and cannot execute `/api/payout`. Use `npx vercel dev` to test payouts locally.
+
+## Verification
 
 ```powershell
 npm run build
+npm run check:server
 ```
