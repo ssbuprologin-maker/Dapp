@@ -3,9 +3,10 @@ import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@sol
 import { ShieldCheck } from 'lucide-react'
 import { confirmDevnetSignature, getDevnetBlockhash, sendDevnetRawTransaction } from './solanaRpc'
 import { MEGAETH_EXPLORER_URL, MEGAETH_RECEIVER, sendMegaEthEntry } from './megaEth'
+import { trackAnalytics } from './analytics'
 
 type PaymentNetwork = 'solana' | 'megaeth'
-type ScoreRow = { rank: number; score: number; playedAt: number; won: boolean; transaction?: string; network?: PaymentNetwork }
+type ScoreRow = { rank: number; score: number; playedAt: number; won: boolean; transaction?: string; network?: PaymentNetwork; wallet?: string }
 type StoredScore = { score: number; playedAt: number; won?: boolean; transaction?: string; network?: PaymentNetwork }
 type Phase = 'ready' | 'running' | 'finished'
 type Winner = 'player' | 'bot' | null
@@ -56,6 +57,26 @@ function loadScores(wallet: string): ScoreRow[] {
   }
 }
 
+async function worldwideLeaderboard(payload?: {
+  wallet: string
+  score: number
+  won: boolean
+  transaction: string
+  network: PaymentNetwork
+}) {
+  const response = await fetch('/api/leaderboard', payload ? {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  } : undefined)
+  const text = await response.text()
+  let body: { scores?: ScoreRow[]; message?: string }
+  try { body = JSON.parse(text) as typeof body }
+  catch { throw new Error(`Leaderboard service unavailable (${response.status}).`) }
+  if (!response.ok) throw new Error(body.message ?? 'Worldwide leaderboard unavailable.')
+  return Array.isArray(body.scores) ? body.scores : []
+}
+
 const isRateLimit = (error: unknown) => /429|too many requests|rate.?limit/i.test(error instanceof Error ? error.message : String(error))
 
 async function claimDevnetPayout(wallet: string, entrySignature: string) {
@@ -87,6 +108,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const [paying, setPaying] = useState(false)
   const [paymentError, setPaymentError] = useState('')
   const [leaderboard, setLeaderboard] = useState<ScoreRow[]>([])
+  const [leaderboardMode, setLeaderboardMode] = useState<'worldwide' | 'local'>('local')
   const [seed, setSeed] = useState(0)
   const [startAt, setStartAt] = useState<number | null>(null)
   const [y, setY] = useState(0)
@@ -101,7 +123,13 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const entrySignatureRef = useRef('')
   const obstacleCourse = useMemo(() => createObstacleCourse(seed), [seed])
 
-  useEffect(() => { setLeaderboard(loadScores(address)) }, [address])
+  useEffect(() => {
+    setLeaderboard(loadScores(address))
+    setLeaderboardMode('local')
+    void worldwideLeaderboard()
+      .then(scores => { setLeaderboard(scores); setLeaderboardMode('worldwide') })
+      .catch(() => { /* Local scores remain available until Redis is configured. */ })
+  }, [address])
 
   const jump = useCallback(() => {
     if (phase === 'running' && yRef.current <= 1) velocityRef.current = 680
@@ -123,8 +151,26 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
       .map((row, index) => ({ ...row, rank: index + 1 }))
     localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt, won, transaction, network }) => ({ score: savedScore, playedAt, won, transaction, network }))))
     setLeaderboard(next)
+    setLeaderboardMode('local')
+    if (entrySignatureRef.current) {
+      void worldwideLeaderboard({
+        wallet: address,
+        score: Math.floor(score),
+        won: raceWinner === 'player',
+        transaction: entrySignatureRef.current,
+        network: paymentNetwork,
+      }).then(scores => {
+        setLeaderboard(scores)
+        setLeaderboardMode('worldwide')
+      }).catch(() => { /* The run is still retained in the local fallback. */ })
+    }
     setWinner(raceWinner)
     setPhase('finished')
+    trackAnalytics('game_finished', {
+      network: paymentNetwork === 'solana' ? 'solana_devnet' : 'megaeth_testnet',
+      won: raceWinner === 'player',
+      duration_seconds: Math.floor(score / 1000),
+    })
     if (raceWinner === 'player' && entrySignatureRef.current && paymentNetwork === 'solana') {
       const paidEntry = entrySignatureRef.current
       setStatus('You beat the bot! Requesting 0.02 SOL devnet payout...')
@@ -231,6 +277,11 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
 
       const started = Date.now()
       entrySignatureRef.current = entrySignature
+      trackAnalytics('game_transaction_confirmed', {
+        network: paymentNetwork === 'solana' ? 'solana_devnet' : 'megaeth_testnet',
+        currency: paymentNetwork === 'solana' ? 'SOL' : 'ETH',
+        amount: 0.01,
+      })
       setSeed(Math.floor(Math.random() * 10_000) + 1)
       setStartAt(started)
       setNow(started)
@@ -289,7 +340,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V17</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V18</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -303,7 +354,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
-      <aside className="players-card"><div className="players-title"><div><span>THIS BROWSER</span><h2>Local high scores</h2></div><i className="online" /></div><div className="leaderboard score-board">{leaderboard.length ? <><div className="score-header"><b>#</b><strong>DATE</strong><em>SCORE</em><span>WIN</span><i>TX</i></div>{leaderboard.map(row => <div key={`${row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{new Date(row.playedAt).toLocaleDateString()}</strong><em>{Math.floor(row.score / 1000)}m</em><span className={row.won ? 'win-yes' : 'win-no'}>{row.won ? 'Yes' : 'No'}</span>{row.transaction && row.network ? <a href={row.network === 'solana' ? `https://explorer.solana.com/tx/${row.transaction}?cluster=devnet` : `${MEGAETH_EXPLORER_URL}/tx/${row.transaction}`} target="_blank" rel="noreferrer" title={`Open ${row.network === 'solana' ? 'Solana Explorer' : 'MegaETH Blockscout'}`}>View</a> : <i>—</i>}</div>)}</> : <p>Finish a run to record your first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Stored locally</strong><span>Scores and entry transaction links remain in this browser.</span></p></div></aside>
+      <aside className="players-card"><div className="players-title"><div><span>{leaderboardMode === 'worldwide' ? 'UPSTASH REDIS' : 'THIS BROWSER'}</span><h2>{leaderboardMode === 'worldwide' ? 'Worldwide leaderboard' : 'Local high scores'}</h2></div><i className={leaderboardMode === 'worldwide' ? 'online' : ''} /></div><div className="leaderboard score-board">{leaderboard.length ? <><div className="score-header"><b>#</b><strong>PLAYER</strong><em>SCORE</em><span>WIN</span><i>TX</i></div>{leaderboard.map(row => <div key={`${row.transaction ?? row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{row.wallet ?? 'You'}</strong><em>{Math.floor(row.score / 1000)}m</em><span className={row.won ? 'win-yes' : 'win-no'}>{row.won ? 'Yes' : 'No'}</span>{row.transaction && row.network ? <a href={row.network === 'solana' ? `https://explorer.solana.com/tx/${row.transaction}?cluster=devnet` : `${MEGAETH_EXPLORER_URL}/tx/${row.transaction}`} target="_blank" rel="noreferrer" title={`Open ${row.network === 'solana' ? 'Solana Explorer' : 'MegaETH Blockscout'}`}>View</a> : <i>—</i>}</div>)}</> : <p>Finish a run to record the first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>{leaderboardMode === 'worldwide' ? 'Worldwide scores' : 'Local fallback'}</strong><span>{leaderboardMode === 'worldwide' ? 'Paid entries are verified before Redis accepts a score.' : 'Add the Upstash variables in Vercel to enable worldwide rankings.'}</span></p></div></aside>
     </div>
   </section>
 }

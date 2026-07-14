@@ -16,6 +16,7 @@ import { getDevnetBalance } from './solanaRpc'
 import {
   connectMetaMask, getMegaEthBalance, getMetaMaskProvider, MEGAETH_FAUCET_URL,
 } from './megaEth'
+import { trackAnalytics } from './analytics'
 
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
@@ -87,6 +88,7 @@ function App() {
     try {
       await external.connect()
       setEvmAddress(null)
+      trackAnalytics('wallet_connected', { wallet_type: String(pendingWallet), network: 'solana_devnet' })
       setPendingWallet(null)
       setModal(false)
     } catch (error) {
@@ -98,6 +100,7 @@ function App() {
     if (external.connected) await external.disconnect()
     setEvmAddress(null)
     setLocalWallet(wallet)
+    trackAnalytics('wallet_connected', { wallet_type: 'site_wallet', network: 'solana_devnet' })
   }
 
   const activateMetaMask = async () => {
@@ -107,6 +110,7 @@ function App() {
       if (external.connected) await external.disconnect()
       setLocalWallet(null)
       setEvmAddress(account)
+      trackAnalytics('wallet_connected', { wallet_type: 'metamask', network: 'megaeth_testnet' })
       setPendingWallet(null)
       setModal(false)
     } catch (error) {
