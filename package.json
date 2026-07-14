@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "check:server": "tsc api/game.ts api/hourly-payout.ts api/redis.ts --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck",
+    "check:server": "tsc api/game.ts api/redis.ts --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck",
     "preview": "vite preview",
     "vercel:dev": "vercel dev"
   },
@@ -17,7 +17,6 @@
     "@solana/wallet-adapter-solflare": "^0.6.32",
     "@solana/web3.js": "^1.98.4",
     "@upstash/redis": "^1.35.3",
-    "bs58": "^6.0.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
