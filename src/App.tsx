@@ -207,6 +207,7 @@ function DinoGame({ address, localWallet, signMessage, sendTransaction, connecti
     const socket = io(window.location.origin, {
       path: '/api/socket-io/socket.io',
       transports: ['websocket'],
+      timeout: 15_000,
       reconnection: true,
       reconnectionDelayMax: 5_000,
     })
@@ -231,6 +232,8 @@ function DinoGame({ address, localWallet, signMessage, sendTransaction, connecti
     socket.on('player_sync', ({ wallet, y, score }: { wallet: string; y: number; score: number }) => {
       setPositions(current => ({ ...current, [wallet]: { y, score } }))
     })
+    socket.on('connect', () => setStatus('Connected - verifying wallet...'))
+    socket.on('connect_error', error => setStatus(`Realtime server unavailable: ${error.message}. Retrying...`))
     socket.on('disconnect', () => setStatus('Disconnected - reconnecting...'))
     return () => { socket.disconnect(); socketRef.current = null }
   }, [address, localWallet, signMessage])

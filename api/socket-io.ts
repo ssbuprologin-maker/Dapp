@@ -21,7 +21,9 @@ type AuthedSocket = Socket & { data: { wallet?: string; authenticated?: boolean;
 
 const httpServer = createServer()
 const io = new Server(httpServer, {
-  path: '/api/socket-io/socket.io',
+  // Vercel routes /api/socket-io/socket.io to this function and strips the
+  // function prefix. Inside the function Socket.IO receives /socket.io.
+  path: '/socket.io',
   transports: ['websocket'],
   cors: { origin: true, credentials: true },
 })
