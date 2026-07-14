@@ -1,4 +1,4 @@
-# Dino Run - 2X Devnet Bot Race Build V9
+# Dino Run - 2X Devnet Bot Race Build V11
 
 A Solana devnet player-versus-bot runner with browser-local scores and an intentionally insecure devnet payout prototype.
 
@@ -24,21 +24,21 @@ Output Directory: dist
 Install Command: npm install
 ```
 
-## Required Vercel environment variables
+## Vercel environment variables
 
 ```text
-VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
-SOLANA_RPC_URL=https://api.devnet.solana.com
 PAYOUT_WALLET_PRIVATE_KEY=YOUR_BASE58_DEVNET_PRIVATE_KEY
 ```
 
 `PAYOUT_WALLET_PRIVATE_KEY` must belong to the public receiver shown in the game. Add it only as a protected Vercel server variable. Do not use a `VITE_` prefix. The server rejects the key if it does not match the receiver and rejects any RPC that is not actually Solana devnet.
 
+You do not need to set `VITE_SOLANA_RPC_URL` or `SOLANA_RPC_URL`. Build V11 uses a free no-key transaction endpoint and automatically falls back to the official devnet endpoint. If free providers block balance reads, the balance displays `RPC BUSY` but play remains available; the signed entry transaction still rejects wallets that cannot cover 0.01 SOL plus the network fee.
+
+If you later obtain a private endpoint, both RPC variables remain optional overrides and are tried before the built-in endpoints.
+
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-The public Solana devnet RPC may return HTTP 429 under load. For reliable testing, replace both RPC variables with the same dedicated devnet RPC provider URL.
-
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `2X DEVNET BOT RACE - BUILD V9`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `2X DEVNET BOT RACE - BUILD V11`.
 
 ## Local development
 

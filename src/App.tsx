@@ -12,6 +12,7 @@ import {
   storeWallet, unlockStoredWallet,
 } from './cryptoWallet'
 import SingleplayerDinoGame from './SingleplayerDinoGame'
+import { getDevnetBalance } from './solanaRpc'
 
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
@@ -27,26 +28,31 @@ function App() {
   const [step, setStep] = useState<ModalStep>('choose')
   const [pendingWallet, setPendingWallet] = useState<WalletName | null>(null)
   const [balance, setBalance] = useState<number | null>(null)
+  const [balanceUnavailable, setBalanceUnavailable] = useState(false)
   const [loadingBalance, setLoadingBalance] = useState(false)
   const [message, setMessage] = useState('')
   const [inGame, setInGame] = useState(false)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const connected = Boolean(localWallet || external.connected)
-  const eligible = balance !== null && balance >= MIN_SOL
+  // If public balance reads are throttled, the entry transaction is the final
+  // balance check. A wallet without enough SOL still cannot send the payment.
+  const eligible = balanceUnavailable || (balance !== null && balance >= MIN_SOL)
   const connectionType = localWallet ? 'Site wallet' : external.wallet?.adapter.name ?? 'External wallet'
 
   const refreshBalance = useCallback(async () => {
     if (!publicKey) { setBalance(null); return }
     setLoadingBalance(true)
+    setBalanceUnavailable(false)
     try {
-      const lamports = await connection.getBalance(publicKey, 'confirmed')
+      const lamports = await getDevnetBalance(publicKey)
       setBalance(lamports / LAMPORTS_PER_SOL)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       setMessage(/429|too many requests|rate.?limit/i.test(detail)
-        ? 'Solana devnet is busy (429). Wait a minute, then refresh the balance.'
-        : 'Could not reach Solana devnet. Try again.')
+        ? 'Balance display is temporarily unavailable. The entry transaction will check your balance when you play.'
+        : 'Balance display is unavailable. Your wallet will still reject entry if it lacks 0.01 SOL plus the fee.')
+      setBalanceUnavailable(true)
     } finally { setLoadingBalance(false) }
   }, [connection, publicKey])
 
@@ -100,12 +106,13 @@ function App() {
 
     <main>
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : inGame && publicKey ? (
-        <SingleplayerDinoGame address={publicKey.toBase58()} localWallet={localWallet} sendTransaction={external.sendTransaction} connection={connection} onExit={() => setInGame(false)} />
+        <SingleplayerDinoGame address={publicKey.toBase58()} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onExit={() => setInGame(false)} />
       ) : (
         <WalletView
           address={publicKey!.toBase58()}
           balance={balance}
           eligible={eligible}
+          balanceUnavailable={balanceUnavailable}
           loading={loadingBalance}
           type={connectionType}
           localWallet={localWallet}
@@ -152,8 +159,8 @@ function Landing({ onConnect }: { onConnect: () => void }) {
   </section>
 }
 
-function WalletView({ address, balance, eligible, loading, type, localWallet, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter }: {
-  address: string; balance: number | null; eligible: boolean; loading: boolean; type: string; localWallet: Keypair | null;
+function WalletView({ address, balance, eligible, balanceUnavailable, loading, type, localWallet, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter }: {
+  address: string; balance: number | null; eligible: boolean; balanceUnavailable: boolean; loading: boolean; type: string; localWallet: Keypair | null;
   onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void;
 }) {
   return <section className="wallet-page">
@@ -162,11 +169,11 @@ function WalletView({ address, balance, eligible, loading, type, localWallet, on
       <article className="balance-card">
         <div className="account-line"><span className="wallet-symbol"><Wallet /></span><div><small>{type.toUpperCase()}</small><strong>{short(address)}</strong></div><button onClick={onCopy} aria-label="Copy address"><Copy /></button></div>
         <p>DEVNET BALANCE <button onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} /></button></p>
-        <h2>{balance === null ? '—' : balance.toFixed(4)} <span>SOL</span></h2>
-        <div className={`gate-status ${eligible ? 'passed' : ''}`}><span>{eligible ? <Check /> : <LockKeyhole />}</span><div><strong>{eligible ? 'Enough for entry' : `${JOIN_FEE_SOL} SOL plus network fee required`}</strong><p>{eligible ? 'The entry transfer is requested only when you enter a round.' : `Add at least ${Math.max(0, MIN_SOL - (balance ?? 0)).toFixed(5)} more devnet SOL.`}</p></div></div>
+        <h2>{balanceUnavailable ? 'RPC BUSY' : balance === null ? '—' : balance.toFixed(4)} {!balanceUnavailable && <span>SOL</span>}</h2>
+        <div className={`gate-status ${eligible ? 'passed' : ''}`}><span>{eligible ? <Check /> : <LockKeyhole />}</span><div><strong>{balanceUnavailable ? 'Entry check available' : eligible ? 'Enough for entry' : `${JOIN_FEE_SOL} SOL plus network fee required`}</strong><p>{balanceUnavailable ? 'Play is unlocked; the entry transaction safely fails if your balance is too low.' : eligible ? 'The entry transfer is requested only when you enter a round.' : `Add at least ${Math.max(0, MIN_SOL - (balance ?? 0)).toFixed(5)} more devnet SOL.`}</p></div></div>
       </article>
       <aside className="action-card">
-        {eligible ? <><span className="success-mark"><Check /></span><h2>You are in</h2><p>Your wallet passed the devnet balance requirement.</p><button className="primary" onClick={onEnter}>ENTER DAPP <ArrowRight /></button></> : <><span className="warning-mark"><AlertTriangle /></span><h2>Top up on devnet</h2><p>Use the official Solana faucet, then refresh your balance.</p><a className="primary" href="https://faucet.solana.com/" target="_blank" rel="noreferrer">OPEN DEVNET FAUCET <ExternalLink /></a></>}
+        {eligible ? <><span className="success-mark"><Check /></span><h2>You are in</h2><p>{balanceUnavailable ? 'The payment transaction will verify your available devnet SOL.' : 'Your wallet passed the devnet balance requirement.'}</p><button className="primary" onClick={onEnter}>ENTER DAPP <ArrowRight /></button></> : <><span className="warning-mark"><AlertTriangle /></span><h2>Top up on devnet</h2><p>Use the official Solana faucet, then refresh your balance.</p><a className="primary" href="https://faucet.solana.com/" target="_blank" rel="noreferrer">OPEN DEVNET FAUCET <ExternalLink /></a></>}
       </aside>
     </div>
     {localWallet && <div className="local-tools"><div><ShieldCheck /><p><strong>Browser-local site wallet</strong><span>Encrypted on this device. Keep an offline recovery file.</span></p></div><div><button onClick={onExport}><Download /> Export recovery</button><button className="danger" onClick={onForget}><Trash2 /> Forget wallet</button></div></div>}

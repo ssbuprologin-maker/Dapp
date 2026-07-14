@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ShieldCheck } from 'lucide-react'
+import { confirmDevnetSignature, getDevnetBlockhash, sendDevnetRawTransaction } from './solanaRpc'
 
 type ScoreRow = { rank: number; score: number; playedAt: number }
 type StoredScore = { score: number; playedAt: number }
@@ -44,21 +45,7 @@ function loadScores(wallet: string): ScoreRow[] {
   }
 }
 
-const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
 const isRateLimit = (error: unknown) => /429|too many requests|rate.?limit/i.test(error instanceof Error ? error.message : String(error))
-
-async function retryRateLimited<T>(operation: () => Promise<T>) {
-  let lastError: unknown
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try { return await operation() }
-    catch (error) {
-      lastError = error
-      if (!isRateLimit(error) || attempt === 2) throw error
-      await wait(700 * (attempt + 1))
-    }
-  }
-  throw lastError
-}
 
 async function claimDevnetPayout(wallet: string, entrySignature: string) {
   const response = await fetch('/api/payout', {
@@ -74,10 +61,11 @@ async function claimDevnetPayout(wallet: string, entrySignature: string) {
   return body
 }
 
-export default function SingleplayerDinoGame({ address, localWallet, sendTransaction, connection, onExit }: {
+export default function SingleplayerDinoGame({ address, localWallet, sendTransaction, signTransaction, connection, onExit }: {
   address: string
   localWallet: Keypair | null
   sendTransaction: (transaction: Transaction, connection: Connection) => Promise<string>
+  signTransaction?: (transaction: Transaction) => Promise<Transaction>
   connection: Connection
   onExit: () => void
 }) {
@@ -192,16 +180,26 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
 
       let entrySignature: string
       if (localWallet) {
-        const latest = await retryRateLimited(() => connection.getLatestBlockhash('confirmed'))
+        const latest = await getDevnetBlockhash()
         transaction.feePayer = localWallet.publicKey
         transaction.recentBlockhash = latest.blockhash
         transaction.sign(localWallet)
         const serialized = transaction.serialize()
-        entrySignature = await retryRateLimited(() => connection.sendRawTransaction(serialized))
-        await retryRateLimited(() => connection.confirmTransaction({ signature: entrySignature, ...latest }, 'confirmed'))
+        entrySignature = await sendDevnetRawTransaction(serialized)
+        await confirmDevnetSignature(entrySignature)
       } else {
-        entrySignature = await sendTransaction(transaction, connection)
-        await retryRateLimited(() => connection.confirmTransaction(entrySignature, 'confirmed'))
+        if (signTransaction) {
+          const latest = await getDevnetBlockhash()
+          transaction.feePayer = playerPublicKey
+          transaction.recentBlockhash = latest.blockhash
+          const signed = await signTransaction(transaction)
+          const serialized = signed.serialize()
+          entrySignature = await sendDevnetRawTransaction(serialized)
+          await confirmDevnetSignature(entrySignature)
+        } else {
+          entrySignature = await sendTransaction(transaction, connection)
+          await confirmDevnetSignature(entrySignature)
+        }
       }
 
       const started = Date.now()
@@ -224,13 +222,13 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       setPaymentError(/base58/i.test(detail)
         ? 'Your wallet returned invalid transaction data. Disconnect the wallet, refresh the page, reconnect, and try again.'
         : isRateLimit(error)
-          ? 'Solana devnet is rate-limiting requests (429). Wait a minute and retry, or set VITE_SOLANA_RPC_URL to a dedicated devnet RPC URL.'
+          ? 'The free Solana devnet endpoints are temporarily rate-limited. Wait a moment and retry.'
           : detail)
       setStatus('Ready to play')
     } finally {
       setPaying(false)
     }
-  }, [address, connection, localWallet, paying, sendTransaction])
+  }, [address, connection, localWallet, paying, sendTransaction, signTransaction])
 
   const reset = useCallback(() => {
     finishedRef.current = false
@@ -264,7 +262,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V9</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V11</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
