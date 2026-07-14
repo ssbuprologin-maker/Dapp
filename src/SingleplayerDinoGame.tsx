@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ShieldCheck } from 'lucide-react'
 import { confirmDevnetSignature, getDevnetBlockhash, sendDevnetRawTransaction } from './solanaRpc'
+import { MEGAETH_RECEIVER, sendMegaEthEntry } from './megaEth'
 
 type ScoreRow = { rank: number; score: number; playedAt: number; won: boolean }
 type StoredScore = { score: number; playedAt: number; won?: boolean }
@@ -61,8 +62,9 @@ async function claimDevnetPayout(wallet: string, entrySignature: string) {
   return body
 }
 
-export default function SingleplayerDinoGame({ address, localWallet, sendTransaction, signTransaction, connection, onExit }: {
+export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, onExit }: {
   address: string
+  paymentNetwork: 'solana' | 'megaeth'
   localWallet: Keypair | null
   sendTransaction: (transaction: Transaction, connection: Connection) => Promise<string>
   signTransaction?: (transaction: Transaction) => Promise<Transaction>
@@ -106,16 +108,18 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     setLeaderboard(next)
     setWinner(raceWinner)
     setPhase('finished')
-    if (raceWinner === 'player' && entrySignatureRef.current) {
+    if (raceWinner === 'player' && entrySignatureRef.current && paymentNetwork === 'solana') {
       const paidEntry = entrySignatureRef.current
       setStatus('You beat the bot! Requesting 0.02 SOL devnet payout...')
       void claimDevnetPayout(address, paidEntry)
         .then(result => setStatus(`2x payout sent: ${short(result.payoutSignature ?? '')}`))
         .catch(error => setStatus(error instanceof Error ? `Payout error: ${error.message}` : 'Payout failed.'))
+    } else if (raceWinner === 'player') {
+      setStatus('You beat the bot! Win recorded locally.')
     } else {
       setStatus('The bot beat you')
     }
-  }, [address])
+  }, [address, paymentNetwork])
 
   useEffect(() => {
     if (phase !== 'running' || !startAt) return
@@ -172,36 +176,39 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     setPaying(true)
     setPaymentError('')
     try {
-      let playerPublicKey: PublicKey
-      try { playerPublicKey = new PublicKey(address) }
-      catch { throw new Error('The connected wallet returned an invalid public address. Disconnect it, refresh, and reconnect.') }
-      const transaction = new Transaction().add(SystemProgram.transfer({
-        fromPubkey: playerPublicKey,
-        toPubkey: receiverPublicKey,
-        lamports: ENTRY_LAMPORTS,
-      }))
-
       let entrySignature: string
-      if (localWallet) {
-        const latest = await getDevnetBlockhash()
-        transaction.feePayer = localWallet.publicKey
-        transaction.recentBlockhash = latest.blockhash
-        transaction.sign(localWallet)
-        const serialized = transaction.serialize()
-        entrySignature = await sendDevnetRawTransaction(serialized)
-        await confirmDevnetSignature(entrySignature)
+      if (paymentNetwork === 'megaeth') {
+        entrySignature = await sendMegaEthEntry(address)
       } else {
-        if (signTransaction) {
+        let playerPublicKey: PublicKey
+        try { playerPublicKey = new PublicKey(address) }
+        catch { throw new Error('The connected wallet returned an invalid public address. Disconnect it, refresh, and reconnect.') }
+        const transaction = new Transaction().add(SystemProgram.transfer({
+          fromPubkey: playerPublicKey,
+          toPubkey: receiverPublicKey,
+          lamports: ENTRY_LAMPORTS,
+        }))
+        if (localWallet) {
           const latest = await getDevnetBlockhash()
-          transaction.feePayer = playerPublicKey
+          transaction.feePayer = localWallet.publicKey
           transaction.recentBlockhash = latest.blockhash
-          const signed = await signTransaction(transaction)
-          const serialized = signed.serialize()
+          transaction.sign(localWallet)
+          const serialized = transaction.serialize()
           entrySignature = await sendDevnetRawTransaction(serialized)
           await confirmDevnetSignature(entrySignature)
         } else {
-          entrySignature = await sendTransaction(transaction, connection)
-          await confirmDevnetSignature(entrySignature)
+          if (signTransaction) {
+            const latest = await getDevnetBlockhash()
+            transaction.feePayer = playerPublicKey
+            transaction.recentBlockhash = latest.blockhash
+            const signed = await signTransaction(transaction)
+            const serialized = signed.serialize()
+            entrySignature = await sendDevnetRawTransaction(serialized)
+            await confirmDevnetSignature(entrySignature)
+          } else {
+            entrySignature = await sendTransaction(transaction, connection)
+            await confirmDevnetSignature(entrySignature)
+          }
         }
       }
 
@@ -225,13 +232,13 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
       setPaymentError(/base58/i.test(detail)
         ? 'Your wallet returned invalid transaction data. Disconnect the wallet, refresh the page, reconnect, and try again.'
         : isRateLimit(error)
-          ? 'The free Solana devnet endpoints are temporarily rate-limited. Wait a moment and retry.'
+          ? `The free ${paymentNetwork === 'megaeth' ? 'MegaETH testnet' : 'Solana devnet'} endpoint is temporarily rate-limited. Wait a moment and retry.`
           : detail)
       setStatus('Ready to play')
     } finally {
       setPaying(false)
     }
-  }, [address, connection, localWallet, paying, sendTransaction, signTransaction])
+  }, [address, connection, localWallet, paying, paymentNetwork, sendTransaction, signTransaction])
 
   const reset = useCallback(() => {
     finishedRef.current = false
@@ -265,7 +272,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>2X DEVNET BOT RACE - BUILD V13</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V14</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -275,7 +282,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase !== 'ready' && <><span className="dino bot-dino" style={{ transform: `translateY(-${botY}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span><span className="bot-label" style={{ transform: `translateY(-${botY}px)` }}>BOT</span></>}
           {phase === 'finished' && <div className="arena-message result"><strong>{winner === 'player' ? 'You beat the bot!' : 'Bot wins'}</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>Race the bot for 2x</strong><span>Pay 0.01 devnet SOL. Beat the bot to receive 0.02.</span><code>Receiver: {short(receiverAddress)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START 2X RACE · 0.01 SOL'}</button><small>Devnet prototype. The browser reports the winner to the payout function.</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>{paymentNetwork === 'solana' ? 'Race the bot for 2x' : 'Race the bot on MegaETH'}</strong><span>{paymentNetwork === 'solana' ? 'Pay 0.01 devnet SOL. Beat the bot to receive 0.02.' : 'Pay 0.01 MegaETH testnet ETH. Wins are recorded locally.'}</span><code>Receiver: {short(paymentNetwork === 'solana' ? receiverAddress : MEGAETH_RECEIVER)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : `START RACE · 0.01 ${paymentNetwork === 'solana' ? 'SOL' : 'ETH'}`}</button><small>{paymentNetwork === 'solana' ? 'Devnet prototype. The browser reports the winner to the payout function.' : 'MegaETH testnet entry. MetaMask confirms the payment and network.'}</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>

@@ -13,4 +13,6 @@
 .score-board{border-top:0;flex:1;min-height:320px;margin-top:0;padding-top:18px}.live-pill.ready{color:#ffbd52}.live-pill.ready i{background:#ffbd52}
 
 .score-board>div{grid-template-columns:28px 1fr 42px 30px}.score-board>div>span{font:500 8px DM Mono;color:#ff7771;text-align:right}.score-board>div>span.win-yes{color:var(--green)}.score-board>div.score-header{border-bottom:1px solid #29292e;padding-top:0}.score-board>div.score-header b,.score-board>div.score-header strong,.score-board>div.score-header em,.score-board>div.score-header span{color:#666;font-size:7px;letter-spacing:.05em}
+
+.wallet-list .metamask-mark{width:31px;height:31px;display:grid;place-items:center;border-radius:7px;background:linear-gradient(135deg,#f6851b,#e2761b);color:#fff;font:800 13px Manrope}.wallet-list button:disabled{opacity:.6;cursor:wait}
 .bot-dino{--player-color:#68a7ff;left:15%;filter:drop-shadow(0 0 10px #68a7ff66)}.bot-label{position:absolute;left:calc(15% + 4px);bottom:132px;color:#68a7ff;background:#111114;border:1px solid #68a7ff55;border-radius:3px;padding:2px 4px;font:500 6px DM Mono;transition:transform .07s linear}
