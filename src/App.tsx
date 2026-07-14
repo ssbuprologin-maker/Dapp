@@ -1,7 +1,9 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletName, WalletReadyState } from '@solana/wallet-adapter-base'
-import { Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js'
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
+import { io, Socket } from 'socket.io-client'
+import nacl from 'tweetnacl'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Copy, Download, ExternalLink,
   KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
@@ -12,7 +14,8 @@ import {
   storeWallet, unlockStoredWallet,
 } from './cryptoWallet'
 
-const MIN_SOL = 0.1
+const JOIN_FEE_SOL = 0.01
+const MIN_SOL = 0.01001
 const short = (value: string) => `${value.slice(0, 5)}…${value.slice(-5)}`
 
 type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
@@ -27,6 +30,7 @@ function App() {
   const [balance, setBalance] = useState<number | null>(null)
   const [loadingBalance, setLoadingBalance] = useState(false)
   const [message, setMessage] = useState('')
+  const [inGame, setInGame] = useState(false)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const connected = Boolean(localWallet || external.connected)
@@ -86,7 +90,9 @@ function App() {
     </header>
 
     <main>
-      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : (
+      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : inGame && publicKey ? (
+        <DinoGame address={publicKey.toBase58()} localWallet={localWallet} signMessage={external.signMessage} sendTransaction={external.sendTransaction} connection={connection} onExit={() => setInGame(false)} />
+      ) : (
         <WalletView
           address={publicKey!.toBase58()}
           balance={balance}
@@ -103,11 +109,12 @@ function App() {
               forgetStoredWallet(); setLocalWallet(null); setBalance(null); setMessage('Site wallet removed from this browser.')
             }
           }}
+          onEnter={() => setInGame(true)}
         />
       )}
     </main>
 
-    <footer><span>DEVNET ONLY</span><p>Minimum entry balance: {MIN_SOL} SOL</p><a href="https://github.com/anza-xyz/wallet-adapter" target="_blank" rel="noreferrer">Powered by Anza Wallet Adapter <ExternalLink /></a></footer>
+    <footer><span>DEVNET ONLY</span><p>Game entry fee: {JOIN_FEE_SOL} SOL</p><a href="https://github.com/anza-xyz/wallet-adapter" target="_blank" rel="noreferrer">Powered by Anza Wallet Adapter <ExternalLink /></a></footer>
 
     {modal && <WalletModal
       step={step}
@@ -133,9 +140,9 @@ function Landing({ onConnect }: { onConnect: () => void }) {
   </section>
 }
 
-function WalletView({ address, balance, eligible, loading, type, localWallet, onRefresh, onCopy, onDisconnect, onExport, onForget }: {
+function WalletView({ address, balance, eligible, loading, type, localWallet, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter }: {
   address: string; balance: number | null; eligible: boolean; loading: boolean; type: string; localWallet: Keypair | null;
-  onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void;
+  onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void;
 }) {
   return <section className="wallet-page">
     <div className="wallet-heading"><div><span>CONNECTED WALLET</span><h1>{eligible ? 'Access granted.' : 'Balance required.'}</h1></div><button onClick={onDisconnect}><LogOut /> Disconnect</button></div>
@@ -144,14 +151,147 @@ function WalletView({ address, balance, eligible, loading, type, localWallet, on
         <div className="account-line"><span className="wallet-symbol"><Wallet /></span><div><small>{type.toUpperCase()}</small><strong>{short(address)}</strong></div><button onClick={onCopy} aria-label="Copy address"><Copy /></button></div>
         <p>DEVNET BALANCE <button onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} /></button></p>
         <h2>{balance === null ? '—' : balance.toFixed(4)} <span>SOL</span></h2>
-        <div className={`gate-status ${eligible ? 'passed' : ''}`}><span>{eligible ? <Check /> : <LockKeyhole />}</span><div><strong>{eligible ? 'Wallet eligible' : `${MIN_SOL} SOL required`}</strong><p>{eligible ? 'This wallet may enter the application.' : `Add at least ${Math.max(0, MIN_SOL - (balance ?? 0)).toFixed(4)} more devnet SOL.`}</p></div></div>
+        <div className={`gate-status ${eligible ? 'passed' : ''}`}><span>{eligible ? <Check /> : <LockKeyhole />}</span><div><strong>{eligible ? 'Enough for entry' : `${JOIN_FEE_SOL} SOL plus network fee required`}</strong><p>{eligible ? 'The entry transfer is requested only when you enter a round.' : `Add at least ${Math.max(0, MIN_SOL - (balance ?? 0)).toFixed(5)} more devnet SOL.`}</p></div></div>
       </article>
       <aside className="action-card">
-        {eligible ? <><span className="success-mark"><Check /></span><h2>You’re in</h2><p>Your wallet passed the devnet balance requirement.</p><button className="primary">ENTER DAPP <ArrowRight /></button></> : <><span className="warning-mark"><AlertTriangle /></span><h2>Top up on devnet</h2><p>Use the official Solana faucet, then refresh your balance.</p><a className="primary" href="https://faucet.solana.com/" target="_blank" rel="noreferrer">OPEN DEVNET FAUCET <ExternalLink /></a></>}
+        {eligible ? <><span className="success-mark"><Check /></span><h2>You are in</h2><p>Your wallet passed the devnet balance requirement.</p><button className="primary" onClick={onEnter}>ENTER DINO RUN <ArrowRight /></button></> : <><span className="warning-mark"><AlertTriangle /></span><h2>Top up on devnet</h2><p>Use the official Solana faucet, then refresh your balance.</p><a className="primary" href="https://faucet.solana.com/" target="_blank" rel="noreferrer">OPEN DEVNET FAUCET <ExternalLink /></a></>}
       </aside>
     </div>
     {localWallet && <div className="local-tools"><div><ShieldCheck /><p><strong>Browser-local site wallet</strong><span>Encrypted on this device. Keep an offline recovery file.</span></p></div><div><button onClick={onExport}><Download /> Export recovery</button><button className="danger" onClick={onForget}><Trash2 /> Forget wallet</button></div></div>}
-    {!eligible && <div className="blocked-note"><LockKeyhole /> The rest of the dApp stays locked until this wallet has at least 0.1 confirmed devnet SOL.</div>}
+    {!eligible && <div className="blocked-note"><LockKeyhole /> The game stays locked until this wallet can cover the 0.01 SOL entry fee and network fee.</div>}
+  </section>
+}
+
+type RemotePlayer = { wallet: string; alive: boolean; score: number; color: string }
+type RemoteGame = { phase: 'lobby' | 'countdown' | 'running' | 'finished'; roundId: string; startAt: number | null; seed: number; players: RemotePlayer[]; winner: string | null; serverTime: number; redis: boolean }
+type PlayerSync = { y: number; score: number }
+type LeaderboardRow = { rank: number; wallet: string; wins: number }
+type PaymentRequest = { roundId: string; recipient: string; lamports: number }
+
+const toBase64 = (bytes: Uint8Array) => {
+  let binary = ''
+  bytes.forEach(byte => { binary += String.fromCharCode(byte) })
+  return btoa(binary)
+}
+
+function DinoGame({ address, localWallet, signMessage, sendTransaction, connection, onExit }: {
+  address: string
+  localWallet: Keypair | null
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>
+  sendTransaction: (transaction: Transaction, connection: Connection) => Promise<string>
+  connection: Connection
+  onExit: () => void
+}) {
+  const socketRef = useRef<Socket | null>(null)
+  const [game, setGame] = useState<RemoteGame | null>(null)
+  const [positions, setPositions] = useState<Record<string, PlayerSync>>({})
+  const [status, setStatus] = useState('Connecting to arena...')
+  const [spectator, setSpectator] = useState(false)
+  const [now, setNow] = useState(Date.now())
+  const [payment, setPayment] = useState<PaymentRequest | null>(null)
+  const [paying, setPaying] = useState(false)
+  const [paymentError, setPaymentError] = useState('')
+  const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([])
+
+  useEffect(() => {
+    const socket = io(window.location.origin, {
+      path: '/api/socket-io/socket.io',
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionDelayMax: 5_000,
+    })
+    socketRef.current = socket
+    socket.on('auth_challenge', async ({ message }: { message: string }) => {
+      try {
+        const bytes = new TextEncoder().encode(message)
+        const signature = localWallet ? nacl.sign.detached(bytes, localWallet.secretKey) : await signMessage?.(bytes)
+        if (!signature) throw new Error('This wallet cannot sign messages.')
+        socket.emit('authenticate', { wallet: address, signature: toBase64(signature) })
+      } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not sign in.') }
+    })
+    socket.on('authenticated', () => setStatus('Wallet verified'))
+    socket.on('payment_required', (request: PaymentRequest) => { setPayment(request); setPaymentError(''); setStatus('Entry fee required') })
+    socket.on('payment_error', ({ message }: { message: string }) => { setPaymentError(message); setPaying(false) })
+    socket.on('admitted', ({ spectator: watching }: { spectator?: boolean }) => {
+      setPayment(null); setPaying(false); setSpectator(Boolean(watching)); setStatus(watching ? 'Round in progress - spectating' : 'Entry confirmed')
+    })
+    socket.on('auth_error', ({ message }: { message: string }) => setStatus(message))
+    socket.on('game_state', (state: RemoteGame) => setGame(state))
+    socket.on('leaderboard', (rows: LeaderboardRow[]) => setLeaderboard(rows))
+    socket.on('player_sync', ({ wallet, y, score }: { wallet: string; y: number; score: number }) => {
+      setPositions(current => ({ ...current, [wallet]: { y, score } }))
+    })
+    socket.on('disconnect', () => setStatus('Disconnected - reconnecting...'))
+    return () => { socket.disconnect(); socketRef.current = null }
+  }, [address, localWallet, signMessage])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 33)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const jump = useCallback(() => socketRef.current?.emit('jump'), [])
+
+  const payEntry = useCallback(async () => {
+    if (!payment || paying) return
+    setPaying(true); setPaymentError('')
+    try {
+      const transaction = new Transaction().add(SystemProgram.transfer({
+        fromPubkey: new PublicKey(address),
+        toPubkey: new PublicKey(payment.recipient),
+        lamports: payment.lamports,
+      }))
+      let signature: string
+      if (localWallet) {
+        const latest = await connection.getLatestBlockhash('confirmed')
+        transaction.feePayer = localWallet.publicKey
+        transaction.recentBlockhash = latest.blockhash
+        transaction.sign(localWallet)
+        signature = await connection.sendRawTransaction(transaction.serialize())
+        await connection.confirmTransaction({ signature, ...latest }, 'confirmed')
+      } else {
+        signature = await sendTransaction(transaction, connection)
+        await connection.confirmTransaction(signature, 'confirmed')
+      }
+      socketRef.current?.emit('submit_payment', { signature })
+      setStatus('Verifying entry transaction...')
+    } catch (error) {
+      setPaying(false)
+      setPaymentError(error instanceof Error ? error.message : 'Entry transaction failed.')
+    }
+  }, [address, connection, localWallet, paying, payment, sendTransaction])
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.code === 'Space' || event.code === 'ArrowUp') { event.preventDefault(); jump() }
+    }
+    window.addEventListener('keydown', keydown)
+    return () => window.removeEventListener('keydown', keydown)
+  }, [jump])
+
+  const elapsed = game?.startAt ? Math.max(0, now - game.startAt) : 0
+  const speed = Math.min(0.55, 0.28 + elapsed / 180_000)
+  const offsets = game ? [120 + game.seed % 190, 490 + (game.seed * 7) % 170, 810 + (game.seed * 13) % 100] : []
+  const obstacles = offsets.map(offset => 100 * (900 - ((elapsed * speed + offset) % 940)) / 900)
+  const countdown = game?.startAt ? Math.max(0, Math.ceil((game.startAt - now) / 1000)) : null
+
+  return <section className="game-page">
+    <div className="game-header"><div><span>WHITELISTED MULTIPLAYER</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave arena</button></div>
+    <div className="game-layout">
+      <div className="arena-card">
+        <div className="arena-top"><span className={`live-pill ${game?.phase ?? ''}`}><i /> {game?.phase?.toUpperCase() ?? status.toUpperCase()}</span><strong>{Math.floor((positions[address]?.score ?? elapsed) / 1000).toString().padStart(3, '0')}M</strong></div>
+        <button className="dino-stage" onClick={jump} aria-label="Jump">
+          <div className="sky-line" /><div className="ground-line" />
+          {obstacles.map((left, index) => <span className="cactus" key={index} style={{ left: `${left}%` }}><i /><i /><b /></span>)}
+          {game?.players.filter(player => player.alive).map((player, index) => <span className="dino" key={player.wallet} style={{ '--player-color': player.color, transform: `translate(${index * 3}px, -${positions[player.wallet]?.y ?? 0}px)` } as React.CSSProperties}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>)}
+          {(!game || game.phase === 'lobby') && <div className="arena-message"><strong>Waiting for players</strong><span>At least two whitelisted wallets are needed</span></div>}
+          {game?.phase === 'countdown' && <div className="countdown">{countdown || 'RUN!'}</div>}
+          {game?.phase === 'finished' && <div className="arena-message result"><strong>{game.winner === address ? 'You are the last standing!' : game.winner ? `${short(game.winner)} wins` : 'Nobody survived'}</strong><span>Final round result</span><button onClick={event => { event.stopPropagation(); socketRef.current?.emit('play_again') }}>Play again</button></div>}
+          {payment && <div className="arena-message payment-message"><strong>0.01 SOL to enter</strong><span>One direct, non-custodial devnet transfer for this round.</span><code>{short(payment.recipient)}</code>{paymentError && <p>{paymentError}</p>}<button disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'Confirming...' : 'Pay and join'}</button></div>}
+        </button>
+        <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{spectator ? 'You joined late and are spectating this round.' : status}</p></div>
+      </div>
+      <aside className="players-card"><div className="players-title"><div><span>LIVE PLAYERS</span><h2>{game?.players.filter(player => player.alive).length ?? 0} standing</h2></div><i className={game?.redis ? 'online' : ''} /></div><div className="player-list">{game?.players.map(player => <div key={player.wallet} className={player.alive ? '' : 'eliminated'}><span style={{ background: player.color }} /><div><strong>{player.wallet === address ? 'YOU' : short(player.wallet)}</strong><small>{player.alive ? 'RUNNING' : 'ELIMINATED'}</small></div><b>{Math.floor((positions[player.wallet]?.score ?? player.score) / 1000)}m</b></div>) ?? <p>No players connected.</p>}</div><div className="leaderboard"><span>ALL-TIME WINS</span>{leaderboard.length ? leaderboard.map(row => <div key={row.wallet}><b>#{row.rank}</b><strong>{row.wallet === address ? 'YOU' : short(row.wallet)}</strong><em>{row.wins}</em></div>) : <p>No winners yet.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Server authoritative</strong><span>Payments, collisions and results are independently verified.</span></p></div></aside>
+    </div>
   </section>
 }
 
