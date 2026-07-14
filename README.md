@@ -1,4 +1,4 @@
-# Devnet Dino Run - Local Singleplayer Build V6
+# Devnet Dino Run - Local Singleplayer Build V7
 
 A static Solana devnet dinosaur runner with browser-local high scores.
 
@@ -30,7 +30,7 @@ VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
 
 The public devnet receiver address is included directly in the static game build. No receiver environment variable is required. Never add a private key or recovery phrase to Vercel.
 
-Redeploy the newest commit. The game header must display `LOCAL SINGLEPLAYER - BUILD V6`.
+Redeploy the newest commit. The game header must display `LOCAL SINGLEPLAYER - BUILD V7`.
 
 ## Local development
 

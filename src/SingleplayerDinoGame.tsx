@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ShieldCheck } from 'lucide-react'
 
@@ -11,6 +11,24 @@ const receiverAddress = '3aLAsDDF7JBhGGWdENyoFGP36PftRKpufHCN64myPLtN'
 const receiverPublicKey = new PublicKey(receiverAddress)
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 const storageKey = (wallet: string) => `dinorun:local-scores:${wallet}`
+const SAFE_START_MS = 5_000
+
+function createObstacleCourse(seed: number) {
+  let state = seed || 1
+  const random = () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 0x1_0000_0000
+  }
+  const course: number[] = []
+  let position = 900
+  for (let wave = 0; wave < 500; wave += 1) {
+    const triple = random() < 0.2
+    course.push(position)
+    if (triple) course.push(position + 32, position + 64)
+    position += 1_050 + random() * 550
+  }
+  return course
+}
 
 function loadScores(wallet: string): ScoreRow[] {
   try {
@@ -44,6 +62,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const velocityRef = useRef(0)
   const lastFrameRef = useRef(0)
   const finishedRef = useRef(false)
+  const obstacleCourse = useMemo(() => createObstacleCourse(seed), [seed])
 
   useEffect(() => { setLeaderboard(loadScores(address)) }, [address])
 
@@ -77,10 +96,11 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
 
       const current = Date.now()
       const elapsed = current - startAt
-      const speed = Math.min(0.55, 0.28 + elapsed / 180_000)
-      const offsets = [120 + seed % 190, 490 + (seed * 7) % 170, 810 + (seed * 13) % 100]
-      const collision = offsets.some(offset => {
-        const x = 900 - ((elapsed * speed + offset) % 940)
+      const activeElapsed = Math.max(0, elapsed - SAFE_START_MS)
+      const speed = Math.min(0.55, 0.28 + activeElapsed / 180_000)
+      const travel = activeElapsed * speed
+      const collision = elapsed >= SAFE_START_MS && obstacleCourse.some(position => {
+        const x = position - travel
         return x > 58 && x < 116 && yRef.current < 42
       })
 
@@ -91,7 +111,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [finishGame, phase, seed, startAt])
+  }, [finishGame, obstacleCourse, phase, startAt])
 
   const payEntry = useCallback(async () => {
     if (paying) return
@@ -159,18 +179,21 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   }, [jump])
 
   const elapsed = startAt ? Math.max(0, now - startAt) : 0
-  const speed = Math.min(0.55, 0.28 + elapsed / 180_000)
-  const offsets = seed ? [120 + seed % 190, 490 + (seed * 7) % 170, 810 + (seed * 13) % 100] : []
-  const obstacles = offsets.map(offset => 100 * (900 - ((elapsed * speed + offset) % 940)) / 900)
+  const activeElapsed = Math.max(0, elapsed - SAFE_START_MS)
+  const speed = Math.min(0.55, 0.28 + activeElapsed / 180_000)
+  const travel = activeElapsed * speed
+  const obstacles = elapsed < SAFE_START_MS ? [] : obstacleCourse
+    .map(position => ({ position, left: 100 * (position - travel) / 900 }))
+    .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>LOCAL SINGLEPLAYER - BUILD V6</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>LOCAL SINGLEPLAYER - BUILD V7</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
         <button className="dino-stage" onClick={jump} aria-label="Jump">
           <div className="sky-line" /><div className="ground-line" />
-          {obstacles.map((left, index) => <span className="cactus" key={index} style={{ left: `${left}%` }}><i /><i /><b /></span>)}
+          {obstacles.map(obstacle => <span className="cactus" key={obstacle.position} style={{ left: `${obstacle.left}%` }}><i /><i /><b /></span>)}
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase === 'finished' && <div className="arena-message result"><strong>Game over</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
           {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a local singleplayer run for 0.01 devnet SOL.</span><code>Receiver: {short(receiverAddress)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No API or database connection is used.</small></div>}
