@@ -1,18 +1,16 @@
-# Devnet Dino Run - Singleplayer Build V4
+# Devnet Dino Run - Local Singleplayer Build V5
 
-A Solana devnet singleplayer dinosaur runner with a personal Upstash Redis score board.
+A static Solana devnet dinosaur runner with browser-local high scores.
 
-## Current architecture
+## Architecture
 
-- Gameplay and collision detection run locally in the browser.
+- Gameplay and collision detection run entirely in the browser.
+- The ten highest scores for each connected wallet are stored in `localStorage` on that device.
+- No Redis, database, Vercel API function, realtime server, multiplayer connection, or cron job is used.
+- Each run sends `0.01 devnet SOL` directly to the configured public receiver address.
 - Phantom, Solflare, Wallet Standard, and encrypted browser-local wallets are supported.
-- Each run costs `0.01 devnet SOL` and is signed by the player.
-- `/api/game` verifies payments and rejects reused transactions.
-- Upstash Redis stores each wallet's ten best runs.
-- The interface only loads and displays scores for the currently connected wallet.
-- There are no realtime servers, multiplayer connections, cron jobs, or automatic payouts.
 
-The game header must say `SINGLEPLAYER DEVNET - BUILD V4`. If the deployed site displays an older build, redeploy the newest Git commit.
+Because there is no server, payment confirmation is performed by the player's wallet and browser. This is intended only for devnet testing.
 
 ## Vercel project settings
 
@@ -24,40 +22,27 @@ Output Directory: dist
 Install Command: npm install
 ```
 
-## Upstash Redis
-
-Install **Upstash for Redis** from the Vercel Marketplace and connect it to the project for Production and Preview. Leave the custom prefix blank. Confirm Vercel creates:
-
-```text
-UPSTASH_REDIS_REST_URL
-UPSTASH_REDIS_REST_TOKEN
-```
-
-## Required environment variables
+## Required Vercel variables
 
 ```text
 VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
-SOLANA_RPC_URL=https://api.devnet.solana.com
-JOIN_FEE_RECEIVER=YOUR_PUBLIC_DEVNET_WALLET_ADDRESS
-UPSTASH_REDIS_REST_URL=provided-by-upstash
-UPSTASH_REDIS_REST_TOKEN=provided-by-upstash
-ALLOW_ALL_PLAYERS=true
-PLAYER_WHITELIST=
+VITE_JOIN_FEE_RECEIVER=YOUR_PUBLIC_DEVNET_WALLET_ADDRESS
 ```
 
-`JOIN_FEE_RECEIVER` is only a public devnet wallet address. Never add a private key or recovery phrase to Vercel. After changing environment variables, redeploy the latest commit to Production.
+`VITE_JOIN_FEE_RECEIVER` is public browser configuration. Never add a private key or recovery phrase. The build also accepts the old `JOIN_FEE_RECEIVER` name as a temporary fallback, but `VITE_JOIN_FEE_RECEIVER` is preferred.
+
+After setting the variables, redeploy the newest commit. The game header must display `LOCAL SINGLEPLAYER - BUILD V5`.
 
 ## Local development
 
 ```powershell
 npm install
 Copy-Item .env.example .env
-npx vercel dev
+npm run dev
 ```
 
-Verify the project with:
+Verify with:
 
 ```powershell
 npm run build
-npm run check:server
 ```

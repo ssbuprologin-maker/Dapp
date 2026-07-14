@@ -2,23 +2,27 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ShieldCheck } from 'lucide-react'
 
-type LeaderboardRow = { rank: number; score: number; playedAt: number }
-type GameConfig = { recipient: string; lamports: number; leaderboard: LeaderboardRow[]; build: string }
+type ScoreRow = { rank: number; score: number; playedAt: number }
+type StoredScore = { score: number; playedAt: number }
 type Phase = 'ready' | 'running' | 'finished'
 
+const ENTRY_LAMPORTS = 10_000_000
+const receiverAddress = String(import.meta.env.VITE_JOIN_FEE_RECEIVER ?? '').trim()
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
+const storageKey = (wallet: string) => `dinorun:local-scores:${wallet}`
 
-async function readApiResponse(response: Response) {
-  const text = await response.text()
-  let body: Record<string, any>
-  try { body = JSON.parse(text) as Record<string, any> }
-  catch {
-    throw new Error(`Game API unavailable (${response.status}). Redeploy Build V2 and check the Vercel function logs.`)
+function loadScores(wallet: string): ScoreRow[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey(wallet)) ?? '[]') as StoredScore[]
+    return parsed
+      .filter(row => Number.isFinite(row.score) && Number.isFinite(row.playedAt))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map((row, index) => ({ ...row, rank: index + 1 }))
+  } catch {
+    return []
   }
-  if (!response.ok) throw new Error(typeof body.message === 'string' ? body.message : `Game API request failed (${response.status}).`)
-  return body
 }
-
 export default function SingleplayerDinoGame({ address, localWallet, sendTransaction, connection, onExit }: {
   address: string
   localWallet: Keypair | null
@@ -27,56 +31,36 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   onExit: () => void
 }) {
   const [phase, setPhase] = useState<Phase>('ready')
-  const [status, setStatus] = useState('Loading leaderboard...')
+  const [status, setStatus] = useState(receiverAddress ? 'Ready to play' : 'VITE_JOIN_FEE_RECEIVER is not configured.')
   const [now, setNow] = useState(Date.now())
-  const [config, setConfig] = useState<GameConfig | null>(null)
   const [paying, setPaying] = useState(false)
   const [paymentError, setPaymentError] = useState('')
-  const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([])
+  const [leaderboard, setLeaderboard] = useState<ScoreRow[]>([])
   const [seed, setSeed] = useState(0)
   const [startAt, setStartAt] = useState<number | null>(null)
   const [y, setY] = useState(0)
-  const gameToken = useRef('')
   const yRef = useRef(0)
   const velocityRef = useRef(0)
   const lastFrameRef = useRef(0)
   const finishedRef = useRef(false)
 
-  const loadGame = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/game?wallet=${encodeURIComponent(address)}`)
-      const body = await readApiResponse(response)
-      setConfig(body as GameConfig)
-      setLeaderboard(body.leaderboard as LeaderboardRow[])
-      setStatus('Ready to play')
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not load game.')
-    }
-  }, [address])
-
-  useEffect(() => { loadGame() }, [loadGame])
+  useEffect(() => { setLeaderboard(loadScores(address)) }, [address])
 
   const jump = useCallback(() => {
     if (phase === 'running' && yRef.current <= 1) velocityRef.current = 680
   }, [phase])
 
-  const finishGame = useCallback(async (score: number) => {
+  const finishGame = useCallback((score: number) => {
     if (finishedRef.current) return
     finishedRef.current = true
+    const next = [...loadScores(address), { rank: 0, score: Math.floor(score), playedAt: Date.now() }]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map((row, index) => ({ ...row, rank: index + 1 }))
+    localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt }) => ({ score: savedScore, playedAt }))))
+    setLeaderboard(next)
     setPhase('finished')
-    setStatus('Submitting score...')
-    try {
-      const response = await fetch('/api/game', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'submit-score', wallet: address, token: gameToken.current, score }),
-      })
-      const body = await readApiResponse(response)
-      setLeaderboard(body.leaderboard as LeaderboardRow[])
-      setStatus('Score saved')
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Score could not be saved.')
-    }
+    setStatus('High score saved on this device')
   }, [address])
 
   useEffect(() => {
@@ -109,39 +93,34 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   }, [finishGame, phase, seed, startAt])
 
   const payEntry = useCallback(async () => {
-    if (!config || paying) return
+    if (paying) return
     setPaying(true)
     setPaymentError('')
     try {
+      if (!receiverAddress) throw new Error('Set VITE_JOIN_FEE_RECEIVER in Vercel and redeploy.')
+      const receiver = new PublicKey(receiverAddress)
       const transaction = new Transaction().add(SystemProgram.transfer({
         fromPubkey: new PublicKey(address),
-        toPubkey: new PublicKey(config.recipient),
-        lamports: config.lamports,
+        toPubkey: receiver,
+        lamports: ENTRY_LAMPORTS,
       }))
-      let signature: string
+
       if (localWallet) {
         const latest = await connection.getLatestBlockhash('confirmed')
         transaction.feePayer = localWallet.publicKey
         transaction.recentBlockhash = latest.blockhash
         transaction.sign(localWallet)
-        signature = await connection.sendRawTransaction(transaction.serialize())
+        const signature = await connection.sendRawTransaction(transaction.serialize())
         await connection.confirmTransaction({ signature, ...latest }, 'confirmed')
       } else {
-        signature = await sendTransaction(transaction, connection)
+        const signature = await sendTransaction(transaction, connection)
         await connection.confirmTransaction(signature, 'confirmed')
       }
 
-      setStatus('Verifying entry transaction...')
-      const response = await fetch('/api/game', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify-payment', wallet: address, signature }),
-      })
-      const body = await readApiResponse(response)
-      gameToken.current = String(body.token)
-      setSeed(Number(body.seed))
-      setStartAt(Number(body.startAt))
-      setNow(Number(body.startAt))
+      const started = Date.now()
+      setSeed(Math.floor(Math.random() * 10_000) + 1)
+      setStartAt(started)
+      setNow(started)
       yRef.current = 0
       velocityRef.current = 0
       finishedRef.current = false
@@ -154,16 +133,15 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
     } finally {
       setPaying(false)
     }
-  }, [address, config, connection, localWallet, paying, sendTransaction])
+  }, [address, connection, localWallet, paying, sendTransaction])
 
   const reset = useCallback(() => {
-    gameToken.current = ''
     finishedRef.current = false
     setStartAt(null)
     setY(0)
     setPaymentError('')
     setPhase('ready')
-    setStatus('Ready to play')
+    setStatus(receiverAddress ? 'Ready to play' : 'VITE_JOIN_FEE_RECEIVER is not configured.')
   }, [])
 
   useEffect(() => {
@@ -183,7 +161,7 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
   const obstacles = offsets.map(offset => 100 * (900 - ((elapsed * speed + offset) % 940)) / 900)
 
   return <section className="game-page">
-    <div className="game-header"><div><span>SINGLEPLAYER DEVNET - BUILD V4</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
+    <div className="game-header"><div><span>LOCAL SINGLEPLAYER - BUILD V5</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -192,11 +170,11 @@ export default function SingleplayerDinoGame({ address, localWallet, sendTransac
           {obstacles.map((left, index) => <span className="cactus" key={index} style={{ left: `${left}%` }}><i /><i /><b /></span>)}
           {phase !== 'ready' && <span className="dino" style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase === 'finished' && <div className="arena-message result"><strong>Game over</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>{config ? 'Ready to play?' : 'Game service unavailable'}</strong><span>{config ? 'Start a singleplayer run for 0.01 devnet SOL.' : 'This is an API/database configuration error, not a multiplayer connection.'}</span>{config?.recipient && <code>Receiver: {short(config.recipient)}</code>}{(paymentError || (!config && status)) && <p>{paymentError || status}</p>}{config ? <button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button> : <button className="join-game-button" onClick={event => { event.stopPropagation(); setStatus('Loading game service...'); loadGame() }}>RETRY GAME SERVICE</button>}<small>Only your own ten best runs appear on your board.</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>Ready to play?</strong><span>Start a local singleplayer run for 0.01 devnet SOL.</span>{receiverAddress && <code>Receiver: {short(receiverAddress)}</code>}{paymentError && <p>{paymentError}</p>}{!receiverAddress && <p>Set VITE_JOIN_FEE_RECEIVER in Vercel, then redeploy.</p>}<button className="join-game-button" disabled={paying || !receiverAddress} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : 'START PLAYING · 0.01 SOL'}</button><small>No API or database connection is used.</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
-      <aside className="players-card"><div className="players-title"><div><span>YOUR BEST RUNS</span><h2>Personal board</h2></div><i className={config ? 'online' : ''} /></div><div className="leaderboard score-board">{leaderboard.length ? leaderboard.map(row => <div key={`${row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{new Date(row.playedAt).toLocaleDateString()}</strong><em>{Math.floor(row.score / 1000)}m</em></div>) : <p>Finish a run to record your first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Private display</strong><span>This screen only loads scores recorded by your connected wallet.</span></p></div></aside>
+      <aside className="players-card"><div className="players-title"><div><span>THIS BROWSER</span><h2>Local high scores</h2></div><i className="online" /></div><div className="leaderboard score-board">{leaderboard.length ? leaderboard.map(row => <div key={`${row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{new Date(row.playedAt).toLocaleDateString()}</strong><em>{Math.floor(row.score / 1000)}m</em></div>) : <p>Finish a run to record your first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>Stored locally</strong><span>Scores remain in this browser and are never uploaded.</span></p></div></aside>
     </div>
   </section>
 }
