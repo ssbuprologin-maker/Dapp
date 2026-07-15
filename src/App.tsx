@@ -23,7 +23,7 @@ import { trackAnalytics } from './analytics'
 import ChatRail from './ChatRail'
 import ProfilePage from './ProfilePage'
 import dinoSkullUpper from './assets/dino-skull-upper.png'
-import dinoSkullJaw from './assets/dino-skull-jaw.png'
+import dinoSkullJaw from './assets/dino-skull-jaw-v2.png'
 
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
