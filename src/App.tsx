@@ -2,6 +2,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletName, WalletReadyState } from '@solana/wallet-adapter-base'
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
+import bs58 from 'bs58'
+import { ed25519 } from '@noble/curves/ed25519'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Copy, Download, ExternalLink,
   KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
@@ -21,6 +23,7 @@ import { trackAnalytics } from './analytics'
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
 const MIN_MEGAETH = 0.010001
+const NAME_BALANCE = 0.1
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
 type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
@@ -39,6 +42,9 @@ function App() {
   const [loadingBalance, setLoadingBalance] = useState(false)
   const [message, setMessage] = useState('')
   const [inGame, setInGame] = useState(false)
+  const [displayName, setDisplayName] = useState('')
+  const [nextNameChangeAt, setNextNameChangeAt] = useState(0)
+  const [savingName, setSavingName] = useState(false)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -69,6 +75,44 @@ function App() {
   }, [evmAddress, publicKey, walletAddress])
 
   useEffect(() => { refreshBalance() }, [refreshBalance])
+  useEffect(() => {
+    if (!walletAddress) return
+    const network = isMegaEth ? 'megaeth' : 'solana'
+    fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
+      .then(async response => response.ok ? response.json() as Promise<{ displayName?: string; nextChangeAt?: number }> : Promise.reject())
+      .then(profile => { setDisplayName(profile.displayName ?? ''); setNextNameChangeAt(profile.nextChangeAt ?? 0) })
+      .catch(() => { setDisplayName(''); setNextNameChangeAt(0) })
+  }, [isMegaEth, walletAddress])
+
+  const changeDisplayName = async (name: string) => {
+    if (!walletAddress) return
+    setSavingName(true)
+    try {
+      const network = isMegaEth ? 'megaeth' : 'solana'
+      const cleanName = name.trim().replace(/\s+/g, ' ')
+      const timestamp = Date.now()
+      const normalizedWallet = isMegaEth ? walletAddress.toLowerCase() : walletAddress
+      const messageToSign = `Testnet Games name change\nNetwork: ${network}\nWallet: ${normalizedWallet}\nName: ${cleanName}\nTimestamp: ${timestamp}`
+      let signature: string
+      if (isMegaEth) {
+        const provider = getMetaMaskProvider()
+        if (!provider) throw new Error('MetaMask is unavailable.')
+        signature = await provider.request<string>({ method: 'personal_sign', params: [messageToSign, walletAddress] })
+      } else if (localWallet) {
+        signature = bs58.encode(ed25519.sign(new TextEncoder().encode(messageToSign), localWallet.secretKey.slice(0, 32)))
+      } else {
+        if (!external.signMessage) throw new Error('This wallet does not support message signing.')
+        signature = bs58.encode(await external.signMessage(new TextEncoder().encode(messageToSign)))
+      }
+      const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ network, wallet: walletAddress, displayName: cleanName, timestamp, signature }) })
+      const body = await response.json() as { displayName?: string; nextChangeAt?: number; message?: string }
+      if (!response.ok) throw new Error(body.message ?? 'Could not change name.')
+      setDisplayName(body.displayName ?? cleanName)
+      setNextNameChangeAt(body.nextChangeAt ?? Date.now() + 10 * 60_000)
+      setMessage('Worldwide name updated.')
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not change name.') }
+    finally { setSavingName(false) }
+  }
   const chooseExternal = (name: WalletName, readyState: WalletReadyState) => {
     if (readyState !== WalletReadyState.Installed && readyState !== WalletReadyState.Loadable) {
       setMessage(`${name} is not installed in this browser.`)
@@ -180,6 +224,11 @@ function App() {
             }
           }}
           onEnter={() => setInGame(true)}
+          displayName={displayName}
+          canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE}
+          nextNameChangeAt={nextNameChangeAt}
+          savingName={savingName}
+          onChangeName={changeDisplayName}
         />
       )}
     </main>
@@ -215,10 +264,14 @@ function Landing({ onConnect }: { onConnect: () => void }) {
   </section>
 }
 
-function WalletView({ address, balance, eligible, balanceUnavailable, loading, type, currency, joinFee, faucetUrl, localWallet, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter }: {
+function WalletView({ address, balance, eligible, balanceUnavailable, loading, type, currency, joinFee, faucetUrl, localWallet, displayName, canChangeName, nextNameChangeAt, savingName, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter, onChangeName }: {
   address: string; balance: number | null; eligible: boolean; balanceUnavailable: boolean; loading: boolean; type: string; currency: string; joinFee: number; faucetUrl: string; localWallet: Keypair | null;
-  onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void;
+  displayName: string; canChangeName: boolean; nextNameChangeAt: number; savingName: boolean;
+  onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void; onChangeName: (name: string) => Promise<void>;
 }) {
+  const [name, setName] = useState(displayName)
+  useEffect(() => setName(displayName), [displayName])
+  const cooldownMinutes = Math.max(0, Math.ceil((nextNameChangeAt - Date.now()) / 60_000))
   return <section className="wallet-page">
     <div className="wallet-heading"><div><span>CONNECTED WALLET</span><h1>{eligible ? 'Access granted.' : 'Balance required.'}</h1></div><button onClick={onDisconnect}><LogOut /> Disconnect</button></div>
     <div className="account-grid">
@@ -232,6 +285,10 @@ function WalletView({ address, balance, eligible, balanceUnavailable, loading, t
         {eligible ? <><span className="success-mark"><Check /></span><h2>You are in</h2><p>{balanceUnavailable ? 'The payment transaction will verify your available testnet balance.' : 'Your wallet passed the testnet balance requirement.'}</p><button className="primary" onClick={onEnter}>ENTER DAPP <ArrowRight /></button></> : <><span className="warning-mark"><AlertTriangle /></span><h2>Top up on testnet</h2><p>Use the official testnet faucet, then refresh your balance.</p><a className="primary" href={faucetUrl} target="_blank" rel="noreferrer">OPEN TESTNET FAUCET <ExternalLink /></a></>}
       </aside>
     </div>
+    <form className="profile-tools" onSubmit={event => { event.preventDefault(); void onChangeName(name) }}>
+      <div><ShieldCheck /><p><strong>Worldwide site name</strong><span>{canChangeName ? 'Shown on worldwide leaderboard entries. Wallet signature required.' : `Hold more than 0.1 testnet ${currency} to unlock name changes.`}</span></p></div>
+      <div><input value={name} onChange={event => setName(event.target.value)} maxLength={20} placeholder="Choose a name" disabled={!canChangeName || cooldownMinutes > 0 || savingName} /><button disabled={!canChangeName || cooldownMinutes > 0 || savingName || name.trim() === displayName}>{savingName ? 'Saving…' : cooldownMinutes > 0 ? `${cooldownMinutes}m cooldown` : 'Change name'}</button></div>
+    </form>
     {localWallet && <div className="local-tools"><div><ShieldCheck /><p><strong>Browser-local site wallet</strong><span>Encrypted on this device. Keep an offline recovery file.</span></p></div><div><button onClick={onExport}><Download /> Export recovery</button><button className="danger" onClick={onForget}><Trash2 /> Forget wallet</button></div></div>}
     {!eligible && <div className="blocked-note"><LockKeyhole /> The game stays locked until this wallet can cover the 0.01 {currency} entry fee and network fee.</div>}
   </section>

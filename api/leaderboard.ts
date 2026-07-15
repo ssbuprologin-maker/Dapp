@@ -18,6 +18,7 @@ type LeaderboardRecord = {
   transaction: string
   network: Network
   wallet: string
+  walletAddress?: string
 }
 
 function redisClient() {
@@ -91,7 +92,7 @@ function publicWalletLabel(wallet: string) {
 
 async function readLeaderboard(redis: Redis) {
   const rows = await redis.zrange<string[]>(LEADERBOARD_KEY, 0, 49, { rev: true })
-  return rows.flatMap((row, index) => {
+  const records = rows.flatMap((row, index) => {
     try {
       const record = JSON.parse(row) as LeaderboardRecord
       return [{
@@ -102,6 +103,13 @@ async function readLeaderboard(redis: Redis) {
     }
     catch { return [] }
   })
+  return Promise.all(records.map(async record => {
+    const { walletAddress, ...publicRecord } = record
+    if (!walletAddress) return publicRecord
+    const wallet = record.network === 'megaeth' ? walletAddress.toLowerCase() : walletAddress
+    const profile = await redis.get<{ displayName?: string }>(`testnet-games:profile:${record.network}:${wallet}`)
+    return { ...publicRecord, wallet: profile?.displayName || record.wallet }
+  }))
 }
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -136,6 +144,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       transaction,
       network,
       wallet: publicWalletLabel(wallet),
+      walletAddress: wallet,
     }
     try {
       await redis.zadd(LEADERBOARD_KEY, { score, member: JSON.stringify(record) })
