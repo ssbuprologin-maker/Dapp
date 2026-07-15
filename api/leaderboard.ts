@@ -28,6 +28,12 @@ function redisClient() {
   return new Redis({ url, token, automaticDeserialization: false })
 }
 
+function profileRedisClient() {
+  const url = process.env.UPSTASH_REDIS_REST_URL!.trim()
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN!.trim()
+  return new Redis({ url, token })
+}
+
 const solanaConnections = [...new Set([
   process.env.SOLANA_RPC_URL?.trim(),
   'https://solana-devnet.gateway.tatum.io',
@@ -103,12 +109,16 @@ async function readLeaderboard(redis: Redis) {
     }
     catch { return [] }
   })
+  const profileRedis = profileRedisClient()
   return Promise.all(records.map(async record => {
     const { walletAddress, ...publicRecord } = record
-    if (!walletAddress) return publicRecord
-    const wallet = record.network === 'megaeth' ? walletAddress.toLowerCase() : walletAddress
-    const profile = await redis.get<{ displayName?: string }>(`testnet-games:profile:${record.network}:${wallet}`)
-    return { ...publicRecord, wallet: profile?.displayName || record.wallet }
+    const wallet = walletAddress && (record.network === 'megaeth' ? walletAddress.toLowerCase() : walletAddress)
+    const key = wallet
+      ? `testnet-games:profile:${record.network}:${wallet}`
+      : `testnet-games:profile-label:${record.network}:${record.wallet}`
+    const profileValue = await profileRedis.get<{ displayName?: string } | string>(key)
+    const displayName = typeof profileValue === 'string' ? profileValue : profileValue?.displayName
+    return { ...publicRecord, wallet: displayName || record.wallet, profileWallet: walletAddress }
   }))
 }
 

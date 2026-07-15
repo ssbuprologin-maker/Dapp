@@ -229,7 +229,7 @@ function App() {
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showProfile && walletAddress && viewedProfile ? (
         <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onBack={() => setShowProfile(false)} />
       ) : inGame && walletAddress ? (
-        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} displayName={displayName} canSetUsername={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} onSetUsername={changeDisplayName} onExit={() => setInGame(false)} />
+        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onViewProfile={viewChatProfile} onExit={() => setInGame(false)} />
       ) : (
         <WalletView
           address={walletAddress!}
@@ -298,6 +298,8 @@ function WalletView({ address, balance, eligible, balanceUnavailable, loading, t
   displayName: string; canChangeName: boolean; nextNameChangeAt: number; savingName: boolean;
   onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void; onChangeName: (name: string) => Promise<void>; onProfile: () => void;
 }) {
+  const [firstUsername, setFirstUsername] = useState('')
+  const validFirstUsername = /^[A-Za-z0-9][A-Za-z0-9 _-]{1,18}[A-Za-z0-9]$/.test(firstUsername.trim())
   return <section className="wallet-page">
     <div className="wallet-heading"><div><span>CONNECTED WALLET</span><h1>{eligible ? 'Access granted.' : 'Balance required.'}</h1></div><div className="wallet-actions"><button onClick={onProfile}>View profile</button><button onClick={onDisconnect}><LogOut /> Disconnect</button></div></div>
     <div className="account-grid">
@@ -311,6 +313,7 @@ function WalletView({ address, balance, eligible, balanceUnavailable, loading, t
         {eligible ? <><span className="success-mark"><Check /></span><h2>You are in</h2><p>{balanceUnavailable ? 'The payment transaction will verify your available testnet balance.' : 'Your wallet passed the testnet balance requirement.'}</p><button className="primary" onClick={onEnter}>ENTER DAPP <ArrowRight /></button></> : <><span className="warning-mark"><AlertTriangle /></span><h2>Top up on testnet</h2><p>Use the official testnet faucet, then refresh your balance.</p><a className="primary" href={faucetUrl} target="_blank" rel="noreferrer">OPEN TESTNET FAUCET <ExternalLink /></a></>}
       </aside>
     </div>
+    {!displayName && <form className="first-name-card" onSubmit={event => { event.preventDefault(); if (canChangeName && validFirstUsername) void onChangeName(firstUsername) }}><div><span>FIRST-TIME SETUP</span><strong>Choose your worldwide username</strong><small>Once saved, username changes move to Profile Settings.</small></div><input value={firstUsername} onChange={event => setFirstUsername(event.target.value)} maxLength={20} placeholder="3–20 characters" /><button disabled={!canChangeName || !validFirstUsername || savingName}>{savingName ? 'Saving…' : canChangeName ? 'Save username' : '0.1+ balance required'}</button></form>}
     {localWallet && <div className="local-tools"><div><ShieldCheck /><p><strong>Browser-local site wallet</strong><span>Encrypted on this device. Keep an offline recovery file.</span></p></div><div><button onClick={onExport}><Download /> Export recovery</button><button className="danger" onClick={onForget}><Trash2 /> Forget wallet</button></div></div>}
     {!eligible && <div className="blocked-note"><LockKeyhole /> The game stays locked until this wallet can cover the 0.01 {currency} entry fee and network fee.</div>}
   </section>
