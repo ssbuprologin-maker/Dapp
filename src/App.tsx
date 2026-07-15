@@ -64,6 +64,15 @@ function App() {
   const connectionType = isMegaEth ? 'MetaMask' : localWallet ? 'Site wallet' : external.wallet?.adapter.name ?? 'External wallet'
 
   useEffect(() => {
+    if (localStorage.getItem('testnet-games:last-wallet') !== 'metamask') return
+    const provider = getMetaMaskProvider()
+    if (!provider) return
+    void provider.request<string[]>({ method: 'eth_accounts' }).then(accounts => {
+      if (accounts[0]) setEvmAddress(accounts[0])
+    }).catch(() => { /* MetaMask is locked or no longer authorized. */ })
+  }, [])
+
+  useEffect(() => {
     if (!walletAddress) { setHeaderAvatar(''); return }
     const network = isMegaEth ? 'megaeth' : 'solana'
     setHeaderAvatar(localStorage.getItem(`testnet-games:avatar:${network}:${walletAddress}`) ?? '')
@@ -155,6 +164,7 @@ function App() {
     }
     try {
       await external.connect()
+      localStorage.setItem('testnet-games:last-wallet', 'solana-extension')
       setEvmAddress(null)
       trackAnalytics('wallet_connected', { wallet_type: String(pendingWallet), network: 'solana_devnet' })
       setPendingWallet(null)
@@ -168,6 +178,7 @@ function App() {
     if (external.connected) await external.disconnect()
     setEvmAddress(null)
     setLocalWallet(wallet)
+    localStorage.setItem('testnet-games:last-wallet', 'site-wallet')
     trackAnalytics('wallet_connected', { wallet_type: 'site_wallet', network: 'solana_devnet' })
   }
 
@@ -178,6 +189,7 @@ function App() {
       if (external.connected) await external.disconnect()
       setLocalWallet(null)
       setEvmAddress(account)
+      localStorage.setItem('testnet-games:last-wallet', 'metamask')
       trackAnalytics('wallet_connected', { wallet_type: 'metamask', network: 'megaeth_testnet' })
       setPendingWallet(null)
       setModal(false)
@@ -205,6 +217,7 @@ function App() {
   }, [evmAddress, refreshBalance])
 
   const disconnect = async () => {
+    localStorage.removeItem('testnet-games:last-wallet')
     setShowProfile(false)
     setEvmAddress(null)
     setLocalWallet(null)
@@ -220,7 +233,7 @@ function App() {
 
   return <div className="shell">
     <header>
-      <button className="logo" onClick={() => { setShowProfile(false); setInGame(false); setProfileMenu(false) }}><span><i /><i /><i /></span>TESTNET GAMES</button>
+      <button type="button" className="logo" onClick={() => { setShowProfile(false); setInGame(false); setProfileMenu(false) }}><span><i /><i /><i /></span>TESTNET GAMES</button>
       {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile statistics and menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onViewProfile={viewChatProfile} />

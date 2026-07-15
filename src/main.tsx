@@ -16,7 +16,7 @@ initializeAnalytics()
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={[new PhantomWalletAdapter(), new SolflareWalletAdapter()]} autoConnect={false}>
+      <WalletProvider wallets={[new PhantomWalletAdapter(), new SolflareWalletAdapter()]} autoConnect>
         <App />
       </WalletProvider>
     </ConnectionProvider>
