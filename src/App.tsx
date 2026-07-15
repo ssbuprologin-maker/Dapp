@@ -52,6 +52,7 @@ function App() {
   const [profileSection, setProfileSection] = useState<ProfileSection>('statistics')
   const [profileMenu, setProfileMenu] = useState(false)
   const [headerAvatar, setHeaderAvatar] = useState('')
+  const [viewedProfile, setViewedProfile] = useState<{ wallet: string; network: 'solana' | 'megaeth' } | null>(null)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -74,8 +75,9 @@ function App() {
     return () => window.removeEventListener('profile-avatar-updated', update)
   }, [isMegaEth, walletAddress])
 
-  const openProfile = (section: ProfileSection) => { setProfileSection(section); setShowProfile(true); setProfileMenu(false); setInGame(false) }
-  const openProfileButton = () => { setProfileSection('statistics'); setShowProfile(true); setInGame(false); setProfileMenu(value => !value) }
+  const openProfile = (section: ProfileSection) => { if (walletAddress) setViewedProfile({ wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana' }); setProfileSection(section); setShowProfile(true); setProfileMenu(false); setInGame(false) }
+  const openProfileButton = () => { if (walletAddress) setViewedProfile({ wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana' }); setProfileSection('statistics'); setShowProfile(true); setInGame(false); setProfileMenu(value => !value) }
+  const viewChatProfile = (wallet: string, network: 'solana' | 'megaeth') => { setViewedProfile({ wallet, network }); setProfileSection('statistics'); setShowProfile(true); setProfileMenu(false); setInGame(false) }
 
   const refreshBalance = useCallback(async () => {
     if (!walletAddress) { setBalance(null); return }
@@ -221,11 +223,11 @@ function App() {
       <a className="logo" href="/"><span><i /><i /><i /></span>TESTNET GAMES</a>
       {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile statistics and menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
-    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} />
+    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onViewProfile={viewChatProfile} />
 
     <main>
-      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showProfile && walletAddress ? (
-        <ProfilePage initialSection={profileSection} wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onBack={() => setShowProfile(false)} />
+      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showProfile && walletAddress && viewedProfile ? (
+        <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onBack={() => setShowProfile(false)} />
       ) : inGame && walletAddress ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onExit={() => setInGame(false)} />
       ) : (
