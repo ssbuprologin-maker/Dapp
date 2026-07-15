@@ -4,6 +4,7 @@ import { WalletName, WalletReadyState } from '@solana/wallet-adapter-base'
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { ed25519 } from '@noble/curves/ed25519'
+import { sha256 } from '@noble/hashes/sha2'
 import {
   AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Copy, Download, ExternalLink,
   KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
@@ -112,8 +113,15 @@ function App() {
     if (!walletAddress) return
     const network = isMegaEth ? 'megaeth' : 'solana'
     fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
-      .then(async response => response.ok ? response.json() as Promise<{ displayName?: string; nextChangeAt?: number }> : Promise.reject())
-      .then(profile => { setDisplayName(profile.displayName ?? ''); setNextNameChangeAt(profile.nextChangeAt ?? 0) })
+      .then(async response => response.ok ? response.json() as Promise<{ displayName?: string; nextChangeAt?: number; avatarUrl?: string }> : Promise.reject())
+      .then(profile => {
+        setDisplayName(profile.displayName ?? ''); setNextNameChangeAt(profile.nextChangeAt ?? 0)
+        if (profile.avatarUrl) {
+          setHeaderAvatar(profile.avatarUrl)
+          localStorage.setItem(`testnet-games:avatar:${isMegaEth ? 'megaeth' : 'solana'}:${walletAddress}`, profile.avatarUrl)
+          window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana', avatar: profile.avatarUrl } }))
+        }
+      })
       .catch(() => { setDisplayName(''); setNextNameChangeAt(0) })
   }, [isMegaEth, walletAddress])
 
@@ -145,6 +153,30 @@ function App() {
       setMessage('Worldwide name updated.')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not change name.') }
     finally { setSavingName(false) }
+  }
+  const changeAvatar = async (avatarUrl: string) => {
+    if (!walletAddress) return
+    try {
+      const network = isMegaEth ? 'megaeth' : 'solana'
+      const normalizedWallet = isMegaEth ? walletAddress.toLowerCase() : walletAddress
+      const timestamp = Date.now()
+      const hash = Array.from(sha256(new TextEncoder().encode(avatarUrl)), byte => byte.toString(16).padStart(2, '0')).join('')
+      const messageToSign = `Testnet Games avatar change\nNetwork: ${network}\nWallet: ${normalizedWallet}\nAvatar SHA-256: ${hash}\nTimestamp: ${timestamp}`
+      let signature: string
+      if (isMegaEth) {
+        const provider = getMetaMaskProvider()
+        if (!provider) throw new Error('MetaMask is unavailable.')
+        signature = await provider.request<string>({ method: 'personal_sign', params: [messageToSign, walletAddress] })
+      } else if (localWallet) signature = bs58.encode(ed25519.sign(new TextEncoder().encode(messageToSign), localWallet.secretKey.slice(0, 32)))
+      else {
+        if (!external.signMessage) throw new Error('This wallet does not support message signing.')
+        signature = bs58.encode(await external.signMessage(new TextEncoder().encode(messageToSign)))
+      }
+      const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'avatar', network, wallet: walletAddress, avatarUrl, timestamp, signature }) })
+      const body = await response.json() as { message?: string }
+      if (!response.ok) throw new Error(body.message ?? 'Could not save profile picture.')
+      setHeaderAvatar(avatarUrl); setMessage(avatarUrl ? 'Profile picture saved worldwide.' : 'Profile picture removed.')
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save profile picture.') }
   }
   const chooseExternal = (name: WalletName, readyState: WalletReadyState) => {
     if (readyState !== WalletReadyState.Installed && readyState !== WalletReadyState.Loadable) {
@@ -236,11 +268,11 @@ function App() {
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setInGame(false); setProfileMenu(false) }}><span><i /><i /><i /></span>TESTNET GAMES</button>
       {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile statistics and menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
-    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onViewProfile={viewChatProfile} />
+    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} />
 
     <main>
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showProfile && walletAddress && viewedProfile ? (
-        <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onBack={() => setShowProfile(false)} />
+        <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onBack={() => setShowProfile(false)} />
       ) : inGame && walletAddress ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onViewProfile={viewChatProfile} onExit={() => setInGame(false)} />
       ) : (

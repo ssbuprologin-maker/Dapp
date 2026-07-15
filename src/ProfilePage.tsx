@@ -6,7 +6,7 @@ type Network = 'solana' | 'megaeth'
 type ProfileSection = 'statistics' | 'transactions' | 'settings'
 type ProfileData = { displayName: string; avatarUrl: string; discordConnected: boolean; nextChangeAt: number; stats: { gamesPlayed: number; solWagered: number; ethWagered: number }; transactions: { hash: string; network: Network; playedAt: number; score: number; won: boolean }[] }
 
-export default function ProfilePage({ isOwn, initialSection, wallet, network, displayName, canChangeName, savingName, nextNameChangeAt, onChangeName, onBack }: { isOwn: boolean; initialSection: ProfileSection; wallet: string; network: Network; displayName: string; canChangeName: boolean; savingName: boolean; nextNameChangeAt: number; onChangeName: (name: string) => Promise<void>; onBack: () => void }) {
+export default function ProfilePage({ isOwn, initialSection, wallet, network, displayName, canChangeName, savingName, nextNameChangeAt, onChangeName, onChangeAvatar, onBack }: { isOwn: boolean; initialSection: ProfileSection; wallet: string; network: Network; displayName: string; canChangeName: boolean; savingName: boolean; nextNameChangeAt: number; onChangeName: (name: string) => Promise<void>; onChangeAvatar: (avatar: string) => Promise<void>; onBack: () => void }) {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [name, setName] = useState(displayName)
   const [avatar, setAvatar] = useState(() => localStorage.getItem(`testnet-games:avatar:${network}:${wallet}`) ?? '')
@@ -15,7 +15,7 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
   const [cropZoom, setCropZoom] = useState(1)
   const [section, setSection] = useState<ProfileSection>(initialSection)
   const avatarInput = useRef<HTMLInputElement>(null)
-  useEffect(() => { fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(wallet)}`).then(response => response.json()).then(setProfile).catch(() => undefined) }, [network, wallet, displayName])
+  useEffect(() => { fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(wallet)}`).then(response => response.json()).then((data: ProfileData) => { setProfile(data); if (data.avatarUrl) { setAvatar(data.avatarUrl); if (isOwn) localStorage.setItem(`testnet-games:avatar:${network}:${wallet}`, data.avatarUrl) } }).catch(() => undefined) }, [isOwn, network, wallet, displayName])
   useEffect(() => setName(displayName), [displayName])
   useEffect(() => setSection(initialSection), [initialSection])
   const cooldown = Math.max(0, Math.ceil((nextNameChangeAt - Date.now()) / 60_000))
@@ -44,11 +44,12 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
         localStorage.setItem(`testnet-games:avatar:${network}:${wallet}`, result)
         setAvatar(result); setCropSource(''); setAvatarStatus('Profile picture cropped and saved on this device.')
         window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet, network, avatar: result } }))
+        void onChangeAvatar(result)
       } catch { setAvatarStatus('Browser storage is full. Try another image.') }
     }
     image.src = cropSource
   }
-  const removeAvatar = () => { localStorage.removeItem(`testnet-games:avatar:${network}:${wallet}`); setAvatar(''); setAvatarStatus('Profile picture removed.'); window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet, network, avatar: '' } })) }
+  const removeAvatar = () => { localStorage.removeItem(`testnet-games:avatar:${network}:${wallet}`); setAvatar(''); setAvatarStatus('Profile picture removed.'); window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet, network, avatar: '' } })); void onChangeAvatar('') }
   return <><section className="profile-page">
     <div className="profile-heading"><button onClick={onBack}><ArrowLeft /> Back</button><div><span>PLAYER PROFILE</span><h1>{profile?.displayName || (isOwn ? displayName : '') || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`}</h1></div></div>
     <div className="profile-hero"><button className="profile-avatar" onClick={() => isOwn && avatarInput.current?.click()} title="Profile picture">{avatar ? <img src={avatar} alt="Profile" /> : <UserRound />}</button><input ref={avatarInput} className="avatar-file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={event => { uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /><div><small>{network.toUpperCase()} WALLET · LEVEL 1</small><code>{wallet}</code><p>Worldwide player profile</p></div></div>

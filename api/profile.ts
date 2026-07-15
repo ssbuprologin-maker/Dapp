@@ -5,6 +5,7 @@ import bs58 from 'bs58'
 import { ed25519 } from '@noble/curves/ed25519'
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { keccak_256 } from '@noble/hashes/sha3'
+import { sha256 } from '@noble/hashes/sha2'
 
 type Network = 'solana' | 'megaeth'
 type Profile = { displayName: string; changedAt: number; avatarUrl?: string; discordId?: string }
@@ -35,6 +36,11 @@ export function profileKey(network: Network, wallet: string) {
 
 export function nameChangeMessage(network: Network, wallet: string, displayName: string, timestamp: number) {
   return `Testnet Games name change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nName: ${displayName}\nTimestamp: ${timestamp}`
+}
+
+function avatarChangeMessage(network: Network, wallet: string, avatar: string, timestamp: number) {
+  const hash = Array.from(sha256(encoder.encode(avatar)), byte => byte.toString(16).padStart(2, '0')).join('')
+  return `Testnet Games avatar change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nAvatar SHA-256: ${hash}\nTimestamp: ${timestamp}`
 }
 
 function verifySignature(network: Network, wallet: string, message: string, signature: string) {
@@ -109,6 +115,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
       })
     }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
+    if (request.body?.action === 'avatar') {
+      const avatarUrl = typeof request.body?.avatarUrl === 'string' ? request.body.avatarUrl : ''
+      const timestamp = Number(request.body?.timestamp)
+      const signature = typeof request.body?.signature === 'string' ? request.body.signature : ''
+      if (avatarUrl && (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(avatarUrl) || avatarUrl.length > 200_000)) throw new Error('Avatar must be a cropped JPEG smaller than 150 KB.')
+      if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 5 * 60_000) throw new Error('Avatar request expired. Try again.')
+      verifySignature(network, wallet, avatarChangeMessage(network, wallet, avatarUrl, timestamp), signature)
+      const current = await redis.get<Profile>(key)
+      await redis.set(key, { displayName: current?.displayName ?? '', changedAt: current?.changedAt ?? 0, discordId: current?.discordId, avatarUrl })
+      return response.status(200).json({ avatarUrl })
+    }
     const displayName = typeof request.body?.displayName === 'string' ? request.body.displayName.trim().replace(/\s+/g, ' ') : ''
     const timestamp = Number(request.body?.timestamp)
     const signature = typeof request.body?.signature === 'string' ? request.body.signature : ''
