@@ -75,6 +75,7 @@ function App() {
   }, [isMegaEth, walletAddress])
 
   const openProfile = (section: ProfileSection) => { setProfileSection(section); setShowProfile(true); setProfileMenu(false); setInGame(false) }
+  const openProfileButton = () => { setProfileSection('statistics'); setShowProfile(true); setInGame(false); setProfileMenu(value => !value) }
 
   const refreshBalance = useCallback(async () => {
     if (!walletAddress) { setBalance(null); return }
@@ -218,7 +219,7 @@ function App() {
   return <div className="shell">
     <header>
       <a className="logo" href="/"><span><i /><i /><i /></span>TESTNET GAMES</a>
-      {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={() => setProfileMenu(value => !value)} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
+      {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile statistics and menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} />
 
