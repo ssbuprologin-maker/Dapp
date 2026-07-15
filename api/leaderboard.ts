@@ -13,6 +13,7 @@ type Network = 'solana' | 'megaeth'
 type LeaderboardRecord = {
   score: number
   playedAt: number
+  playedAtUtc: string
   won: boolean
   transaction: string
   network: Network
@@ -91,7 +92,14 @@ function publicWalletLabel(wallet: string) {
 async function readLeaderboard(redis: Redis) {
   const rows = await redis.zrange<string[]>(LEADERBOARD_KEY, 0, 49, { rev: true })
   return rows.flatMap((row, index) => {
-    try { return [{ ...(JSON.parse(row) as LeaderboardRecord), rank: index + 1 }] }
+    try {
+      const record = JSON.parse(row) as LeaderboardRecord
+      return [{
+        ...record,
+        playedAtUtc: record.playedAtUtc ?? new Date(record.playedAt).toISOString(),
+        rank: index + 1,
+      }]
+    }
     catch { return [] }
   })
 }
@@ -119,9 +127,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const claimed = await redis.set(usedKey, '1', { nx: true })
     if (claimed !== 'OK') throw new Error('This entry transaction already has a worldwide score.')
 
+    const playedAt = Date.now()
     const record: LeaderboardRecord = {
       score,
-      playedAt: Date.now(),
+      playedAt,
+      playedAtUtc: new Date(playedAt).toISOString(),
       won,
       transaction,
       network,
