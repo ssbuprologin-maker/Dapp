@@ -3,6 +3,7 @@ import { Redis } from '@upstash/redis'
 import { Connection, PublicKey } from '@solana/web3.js'
 
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
+const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
 const SOLANA_RECEIVER = '3aLAsDDF7JBhGGWdENyoFGP36PftRKpufHCN64myPLtN'
 const MEGAETH_RECEIVER = '0x4caf2b570acf0600810fec32373880fc8b94aa18'
 const SOLANA_ENTRY_LAMPORTS = 10_000_000
@@ -97,18 +98,23 @@ function publicWalletLabel(wallet: string) {
 }
 
 async function readLeaderboard(redis: Redis) {
-  const rows = await redis.zrange<string[]>(LEADERBOARD_KEY, 0, 49, { rev: true })
-  const records = rows.flatMap((row, index) => {
+  const rows = await redis.zrange<string[]>(LEADERBOARD_KEY, 0, 499, { rev: true })
+  const seenPlayers = new Set<string>()
+  const records = rows.flatMap(row => {
     try {
       const record = JSON.parse(row) as LeaderboardRecord
+      const identity = record.walletAddress
+        ? `${record.network}:${record.network === 'megaeth' ? record.walletAddress.toLowerCase() : record.walletAddress}`
+        : `${record.network}:legacy:${record.wallet}`
+      if (seenPlayers.has(identity)) return []
+      seenPlayers.add(identity)
       return [{
         ...record,
         playedAtUtc: record.playedAtUtc ?? new Date(record.playedAt).toISOString(),
-        rank: index + 1,
       }]
     }
     catch { return [] }
-  })
+  }).slice(0, 50).map((record, index) => ({ ...record, rank: index + 1 }))
   const profileRedis = profileRedisClient()
   return Promise.all(records.map(async record => {
     const { walletAddress, ...publicRecord } = record
@@ -120,6 +126,35 @@ async function readLeaderboard(redis: Redis) {
     const displayName = typeof profileValue === 'string' ? profileValue : profileValue?.displayName
     return { ...publicRecord, wallet: displayName || record.wallet, profileWallet: walletAddress }
   }))
+}
+
+function belongsToPlayer(record: LeaderboardRecord, network: Network, wallet: string) {
+  if (record.network !== network) return false
+  if (record.walletAddress) {
+    return network === 'megaeth'
+      ? record.walletAddress.toLowerCase() === wallet.toLowerCase()
+      : record.walletAddress === wallet
+  }
+  return record.wallet === publicWalletLabel(wallet)
+}
+
+async function updatePersonalBest(redis: Redis, record: LeaderboardRecord) {
+  const rows = await redis.zrange<string[]>(LEADERBOARD_KEY, 0, 499, { rev: true })
+  const playerRows = rows.flatMap(member => {
+    try {
+      const saved = JSON.parse(member) as LeaderboardRecord
+      return belongsToPlayer(saved, record.network, record.walletAddress ?? '') ? [{ member, saved }] : []
+    } catch { return [] }
+  })
+  const previousBest = playerRows.reduce<LeaderboardRecord | null>((best, row) => (
+    !best || row.saved.score > best.score ? row.saved : best
+  ), null)
+  const best = previousBest && previousBest.score >= record.score ? previousBest : record
+
+  // Rebuild this player's entry so legacy duplicate rows are collapsed as soon
+  // as that player completes another verified game.
+  if (playerRows.length) await redis.zrem(LEADERBOARD_KEY, ...playerRows.map(row => row.member))
+  await redis.zadd(LEADERBOARD_KEY, { score: best.score, member: JSON.stringify(best) })
 }
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -157,10 +192,16 @@ export default async function handler(request: VercelRequest, response: VercelRe
       walletAddress: wallet,
     }
     try {
-      await redis.zadd(LEADERBOARD_KEY, { score, member: JSON.stringify(record) })
+      // Every verified run belongs in player history, but only a personal best
+      // belongs on the worldwide leaderboard.
+      await redis.zadd(GAME_HISTORY_KEY, { score: playedAt, member: JSON.stringify(record) })
+      await updatePersonalBest(redis, record)
       const total = await redis.zcard(LEADERBOARD_KEY)
       if (total > 500) await redis.zremrangebyrank(LEADERBOARD_KEY, 0, total - 501)
+      const historyTotal = await redis.zcard(GAME_HISTORY_KEY)
+      if (historyTotal > 5_000) await redis.zremrangebyrank(GAME_HISTORY_KEY, 0, historyTotal - 5_001)
     } catch (error) {
+      await redis.zrem(GAME_HISTORY_KEY, JSON.stringify(record))
       await redis.del(usedKey)
       throw error
     }

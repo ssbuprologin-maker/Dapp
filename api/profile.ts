@@ -11,6 +11,9 @@ type Network = 'solana' | 'megaeth'
 type Profile = { displayName: string; changedAt: number; avatarUrl?: string; discordId?: string }
 type LeaderboardRecord = { score: number; playedAt: number; won: boolean; transaction: string; network: Network; walletAddress?: string }
 
+const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
+const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
+
 const COOLDOWN_MS = 10 * 60_000
 const MIN_SOL_LAMPORTS = Math.floor(0.1 * LAMPORTS_PER_SOL)
 const MIN_MEGAETH_WEI = 100_000_000_000_000_000n
@@ -98,15 +101,22 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const url = process.env.UPSTASH_REDIS_REST_URL!.trim()
       const token = process.env.UPSTASH_REDIS_REST_TOKEN!.trim()
       const rawRedis = new Redis({ url, token, automaticDeserialization: false })
-      const rows = await rawRedis.zrange<string[]>('testnet-games:leaderboard:v1', 0, 499, { rev: true })
+      const [historyRows, leaderboardRows] = await Promise.all([
+        rawRedis.zrange<string[]>(GAME_HISTORY_KEY, 0, 4_999, { rev: true }),
+        // Include legacy games written before game history was separated from
+        // personal-best leaderboard entries.
+        rawRedis.zrange<string[]>(LEADERBOARD_KEY, 0, 499, { rev: true }),
+      ])
       const normalized = normalizedWallet(network, wallet)
-      const games = rows.flatMap(row => {
+      const gamesByTransaction = new Map<string, LeaderboardRecord>()
+      ;[...historyRows, ...leaderboardRows].forEach(row => {
         try {
           const record = JSON.parse(row) as LeaderboardRecord
           const recordWallet = record.network === 'megaeth' ? record.walletAddress?.toLowerCase() : record.walletAddress
-          return record.network === network && recordWallet === normalized ? [record] : []
-        } catch { return [] }
+          if (record.network === network && recordWallet === normalized) gamesByTransaction.set(record.transaction, record)
+        } catch { /* Ignore malformed legacy rows. */ }
       })
+      const games = [...gamesByTransaction.values()].sort((a, b) => b.playedAt - a.playedAt)
       return response.status(200).json({
         displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', discordConnected: Boolean(profile?.discordId),
         nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS,
