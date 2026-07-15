@@ -19,6 +19,7 @@ import {
   connectMetaMask, getMegaEthBalance, getMetaMaskProvider, MEGAETH_FAUCET_URL,
 } from './megaEth'
 import { trackAnalytics } from './analytics'
+import ChatRail from './ChatRail'
 
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
@@ -198,6 +199,7 @@ function App() {
       <a className="logo" href="/"><span><i /><i /><i /></span>TESTNET GAMES</a>
       <div className="network"><i /> {isMegaEth ? 'MEGAETH TESTNET' : 'SOLANA DEVNET'}</div>
     </header>
+    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} />
 
     <main>
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : inGame && walletAddress ? (
