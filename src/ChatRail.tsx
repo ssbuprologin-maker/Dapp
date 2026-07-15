@@ -13,6 +13,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
   const [error, setError] = useState('')
   const [ownAvatar, setOwnAvatar] = useState('')
   const [avatars, setAvatars] = useState<Record<string, string>>({})
+  const [onlineCount, setOnlineCount] = useState(0)
   const feed = useRef<HTMLDivElement>(null)
   const channelRef = useRef<Ably.RealtimeChannel | null>(null)
   const lastSentAt = useRef(0)
@@ -29,13 +30,22 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
       const item = ablyMessage.data as ChatMessage
       setMessages(current => current.some(existing => existing.id === item.id) ? current : [...current.slice(-99), item])
     }
+    const updateOnlineCount = async () => {
+      try {
+        const members = await channel.presence.get()
+        if (active) setOnlineCount(new Set(members.map(member => member.clientId)).size)
+      } catch { /* Presence refreshes again on the next event. */ }
+    }
     void channel.subscribe('chat-message', receive).then(async () => {
+      await channel.presence.subscribe(updateOnlineCount)
+      await channel.presence.enter({ network })
+      await updateOnlineCount()
       const history = await channel.history({ limit: 100, direction: 'forwards' })
       if (active) setMessages(history.items.map(item => item.data as ChatMessage).filter(item => item?.id))
       setError('')
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
     client.connection.on('failed', state => setError(state.reason?.message ?? 'Live chat connection failed.'))
-    return () => { active = false; channelRef.current = null; client.close() }
+    return () => { active = false; channelRef.current = null; void channel.presence.leave(); client.close() }
   }, [network, wallet])
 
   useEffect(() => {
@@ -81,7 +91,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
   }
 
   return <aside className="chat-rail">
-    <div className="chat-title"><div><MessageCircle /><span><strong>LIVE CHAT</strong><small>WEBSOCKET ROOM</small></span></div><i /></div>
+    <div className="chat-title"><div><MessageCircle /><span><strong>DEGEN CHAT</strong><small>WEBSOCKET ROOM</small></span></div><span className="online-count"><i />{onlineCount}</span></div>
     <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => { const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network); const avatar = isOwn && ownAvatar ? ownAvatar : item.wallet ? avatars[`${item.network}:${item.wallet}`] : ''; return <article key={item.id}><button className="chat-avatar" onClick={() => item.wallet && onViewProfile(item.wallet, item.network)} disabled={!item.wallet} title={item.wallet ? `View ${item.name}'s statistics` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{item.name.slice(0, 1).toUpperCase()}</span>}</button><div className="chat-message"><header><span><strong>{item.name}</strong><b title="Level 1">1</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{item.message}</p></div><small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small></article> }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
     {error && <div className="chat-error">{error}</div>}
     <form className="chat-compose" onSubmit={send}><textarea value={draft} onChange={event => setDraft(event.target.value)} maxLength={240} placeholder={wallet ? 'Type a message...' : 'Connect wallet to chat'} disabled={!wallet || sending} rows={2} /><div><span>{draft.length}/240</span><button disabled={!wallet || !draft.trim() || sending} aria-label="Send message"><Send /></button></div></form>

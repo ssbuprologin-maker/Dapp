@@ -20,7 +20,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!key) return response.status(503).json({ message: 'Live chat is not configured. Add ABLY_API_KEY in Vercel.' })
     const wallet = validIdentity(request.query.network, request.query.wallet)
     const clientId = wallet ? `${request.query.network}:${wallet}` : `visitor-${crypto.randomUUID()}`
-    const operations = wallet ? ['subscribe', 'history', 'publish'] : ['subscribe', 'history']
+    const operations = wallet ? ['subscribe', 'history', 'publish', 'presence'] : ['subscribe', 'history', 'presence']
     const ably = new Ably.Rest(key)
     const tokenRequest = await ably.auth.createTokenRequest({ clientId, capability: JSON.stringify({ [CHANNEL]: operations }) })
     return response.status(200).json(tokenRequest)
