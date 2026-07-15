@@ -20,6 +20,7 @@ import {
 } from './megaEth'
 import { trackAnalytics } from './analytics'
 import ChatRail from './ChatRail'
+import ProfilePage from './ProfilePage'
 
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
@@ -46,6 +47,7 @@ function App() {
   const [displayName, setDisplayName] = useState('')
   const [nextNameChangeAt, setNextNameChangeAt] = useState(0)
   const [savingName, setSavingName] = useState(false)
+  const [showProfile, setShowProfile] = useState(false)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -182,6 +184,7 @@ function App() {
   }, [evmAddress, refreshBalance])
 
   const disconnect = async () => {
+    setShowProfile(false)
     setEvmAddress(null)
     setLocalWallet(null)
     if (external.connected) await external.disconnect()
@@ -202,7 +205,9 @@ function App() {
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} />
 
     <main>
-      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : inGame && walletAddress ? (
+      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showProfile && walletAddress ? (
+        <ProfilePage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onBack={() => setShowProfile(false)} />
+      ) : inGame && walletAddress ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onExit={() => setInGame(false)} />
       ) : (
         <WalletView
@@ -231,6 +236,7 @@ function App() {
           nextNameChangeAt={nextNameChangeAt}
           savingName={savingName}
           onChangeName={changeDisplayName}
+          onProfile={() => setShowProfile(true)}
         />
       )}
     </main>
@@ -266,16 +272,16 @@ function Landing({ onConnect }: { onConnect: () => void }) {
   </section>
 }
 
-function WalletView({ address, balance, eligible, balanceUnavailable, loading, type, currency, joinFee, faucetUrl, localWallet, displayName, canChangeName, nextNameChangeAt, savingName, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter, onChangeName }: {
+function WalletView({ address, balance, eligible, balanceUnavailable, loading, type, currency, joinFee, faucetUrl, localWallet, displayName, canChangeName, nextNameChangeAt, savingName, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter, onChangeName, onProfile }: {
   address: string; balance: number | null; eligible: boolean; balanceUnavailable: boolean; loading: boolean; type: string; currency: string; joinFee: number; faucetUrl: string; localWallet: Keypair | null;
   displayName: string; canChangeName: boolean; nextNameChangeAt: number; savingName: boolean;
-  onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void; onChangeName: (name: string) => Promise<void>;
+  onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void; onChangeName: (name: string) => Promise<void>; onProfile: () => void;
 }) {
   const [name, setName] = useState(displayName)
   useEffect(() => setName(displayName), [displayName])
   const cooldownMinutes = Math.max(0, Math.ceil((nextNameChangeAt - Date.now()) / 60_000))
   return <section className="wallet-page">
-    <div className="wallet-heading"><div><span>CONNECTED WALLET</span><h1>{eligible ? 'Access granted.' : 'Balance required.'}</h1></div><button onClick={onDisconnect}><LogOut /> Disconnect</button></div>
+    <div className="wallet-heading"><div><span>CONNECTED WALLET</span><h1>{eligible ? 'Access granted.' : 'Balance required.'}</h1></div><div className="wallet-actions"><button onClick={onProfile}>View profile</button><button onClick={onDisconnect}><LogOut /> Disconnect</button></div></div>
     <div className="account-grid">
       <article className="balance-card">
         <div className="account-line"><span className="wallet-symbol"><Wallet /></span><div><small>{type.toUpperCase()}</small><strong>{short(address)}</strong></div><button onClick={onCopy} aria-label="Copy address"><Copy /></button></div>

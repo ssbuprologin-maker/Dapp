@@ -4,7 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 
 const CHAT_KEY = 'testnet-games:chat:v1'
 type Network = 'solana' | 'megaeth'
-type ChatMessage = { id: string; name: string; message: string; network: Network; sentAt: number }
+type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number }
 
 function redisClient() {
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim()
@@ -28,9 +28,15 @@ function parseName(raw: unknown) {
 
 async function readMessages(redis: Redis) {
   const rows = await redis.lrange<string>(CHAT_KEY, 0, 99)
-  return rows.flatMap(row => {
+  const messages = rows.flatMap(row => {
     try { return [JSON.parse(row) as ChatMessage] } catch { return [] }
   }).reverse()
+  const profileKeys = [...new Set(messages.flatMap(item => item.wallet ? [`testnet-games:profile:${item.network}:${item.wallet}`] : []))]
+  const profiles = profileKeys.length ? await redis.mget<unknown[]>(...profileKeys) : []
+  const names = new Map(profileKeys.map((key, index) => [key, parseName(profiles[index])]))
+  return messages.map(item => item.wallet
+    ? { ...item, name: names.get(`testnet-games:profile:${item.network}:${item.wallet}`) || item.name }
+    : item)
 }
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -53,7 +59,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const profile = await redis.get<unknown>(`testnet-games:profile:${network}:${wallet}`)
     const name = parseName(profile) || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
-    const record: ChatMessage = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, name, message, network, sentAt: Date.now() }
+    const record: ChatMessage = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, name, message, network, wallet, sentAt: Date.now() }
     await redis.lpush(CHAT_KEY, JSON.stringify(record))
     await redis.ltrim(CHAT_KEY, 0, 99)
     return response.status(200).json({ messages: await readMessages(redis) })

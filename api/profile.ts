@@ -7,7 +7,8 @@ import { secp256k1 } from '@noble/curves/secp256k1'
 import { keccak_256 } from '@noble/hashes/sha3'
 
 type Network = 'solana' | 'megaeth'
-type Profile = { displayName: string; changedAt: number }
+type Profile = { displayName: string; changedAt: number; avatarUrl?: string; discordId?: string }
+type LeaderboardRecord = { score: number; playedAt: number; won: boolean; transaction: string; network: Network; walletAddress?: string }
 
 const COOLDOWN_MS = 10 * 60_000
 const MIN_SOL_LAMPORTS = Math.floor(0.1 * LAMPORTS_PER_SOL)
@@ -88,7 +89,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
         const label = `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
         await redis.set(`testnet-games:profile-label:${network}:${label}`, profile.displayName)
       }
-      return response.status(200).json({ displayName: profile?.displayName ?? '', nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS })
+      const url = process.env.UPSTASH_REDIS_REST_URL!.trim()
+      const token = process.env.UPSTASH_REDIS_REST_TOKEN!.trim()
+      const rawRedis = new Redis({ url, token, automaticDeserialization: false })
+      const rows = await rawRedis.zrange<string[]>('testnet-games:leaderboard:v1', 0, 499, { rev: true })
+      const normalized = normalizedWallet(network, wallet)
+      const games = rows.flatMap(row => {
+        try {
+          const record = JSON.parse(row) as LeaderboardRecord
+          const recordWallet = record.network === 'megaeth' ? record.walletAddress?.toLowerCase() : record.walletAddress
+          return record.network === network && recordWallet === normalized ? [record] : []
+        } catch { return [] }
+      })
+      return response.status(200).json({
+        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', discordConnected: Boolean(profile?.discordId),
+        nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS,
+        stats: { gamesPlayed: games.length, solWagered: network === 'solana' ? games.length * 0.01 : 0, ethWagered: network === 'megaeth' ? games.length * 0.01 : 0 },
+        transactions: games.slice(0, 25).map(game => ({ hash: game.transaction, network: game.network, playedAt: game.playedAt, score: game.score, won: game.won })),
+      })
     }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
     const displayName = typeof request.body?.displayName === 'string' ? request.body.displayName.trim().replace(/\s+/g, ' ') : ''

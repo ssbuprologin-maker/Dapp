@@ -105,16 +105,10 @@ async function readLeaderboard(redis: Redis) {
   })
   return Promise.all(records.map(async record => {
     const { walletAddress, ...publicRecord } = record
-    const profileKey = walletAddress
-      ? `testnet-games:profile:${record.network}:${record.network === 'megaeth' ? walletAddress.toLowerCase() : walletAddress}`
-      : `testnet-games:profile-label:${record.network}:${record.wallet}`
-    const rawProfile = await redis.get<unknown>(profileKey)
-    let displayName = ''
-    try {
-      const parsed = typeof rawProfile === 'string' ? JSON.parse(rawProfile) as unknown : rawProfile
-      displayName = typeof parsed === 'string' ? parsed : (parsed as { displayName?: string } | null)?.displayName ?? ''
-    } catch { /* Fall back to the shortened wallet label. */ }
-    return { ...publicRecord, wallet: displayName || record.wallet }
+    if (!walletAddress) return publicRecord
+    const wallet = record.network === 'megaeth' ? walletAddress.toLowerCase() : walletAddress
+    const profile = await redis.get<{ displayName?: string }>(`testnet-games:profile:${record.network}:${wallet}`)
+    return { ...publicRecord, wallet: profile?.displayName || record.wallet }
   }))
 }
 
