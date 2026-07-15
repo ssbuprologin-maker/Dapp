@@ -44,17 +44,6 @@ function App() {
   const [step, setStep] = useState<ModalStep>('choose')
   const [pendingWallet, setPendingWallet] = useState<WalletName | null>(null)
 
-  useEffect(() => {
-    if (!modal) return
-    const previousBodyOverflow = document.body.style.overflow
-    const previousRootOverflow = document.documentElement.style.overflow
-    document.body.style.overflow = 'hidden'
-    document.documentElement.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = previousBodyOverflow
-      document.documentElement.style.overflow = previousRootOverflow
-    }
-  }, [modal])
   const [balance, setBalance] = useState<number | null>(null)
   const [balanceUnavailable, setBalanceUnavailable] = useState(false)
   const [loadingBalance, setLoadingBalance] = useState(false)
