@@ -93,13 +93,16 @@ async function claimDevnetPayout(wallet: string, entrySignature: string) {
   return body
 }
 
-export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, onExit }: {
+export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, displayName, canSetUsername, onSetUsername, onExit }: {
   address: string
   paymentNetwork: PaymentNetwork
   localWallet: Keypair | null
   sendTransaction: (transaction: Transaction, connection: Connection) => Promise<string>
   signTransaction?: (transaction: Transaction) => Promise<Transaction>
   connection: Connection
+  displayName: string
+  canSetUsername: boolean
+  onSetUsername: (name: string) => Promise<void>
   onExit: () => void
 }) {
   const [phase, setPhase] = useState<Phase>('ready')
@@ -115,6 +118,9 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const [y, setY] = useState(0)
   const [botY, setBotY] = useState(0)
   const [winner, setWinner] = useState<Winner>(null)
+  const [firstUsername, setFirstUsername] = useState('')
+  const [savingFirstUsername, setSavingFirstUsername] = useState(false)
+  const [dismissedUsername, setDismissedUsername] = useState(false)
   const yRef = useRef(0)
   const velocityRef = useRef(0)
   const botYRef = useRef(0)
@@ -347,8 +353,10 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
     .map(position => ({ position, left: 100 * (position - travel) / 900 }))
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
   const leaderboard = leaderboardMode === 'worldwide' ? worldwideScores : localScores
+  const validFirstUsername = /^[A-Za-z0-9][A-Za-z0-9 _-]{1,18}[A-Za-z0-9]$/.test(firstUsername.trim())
 
   return <section className="game-page">
+    {!displayName && !dismissedUsername && <div className="username-onboarding"><form onSubmit={event => { event.preventDefault(); if (!canSetUsername || !validFirstUsername) return; setSavingFirstUsername(true); void onSetUsername(firstUsername).finally(() => setSavingFirstUsername(false)) }}><span>WELCOME, PLAYER</span><h2>Choose your username</h2><p>This is your first worldwide name. After saving it, future changes are available only in Profile Settings.</p><input value={firstUsername} onChange={event => setFirstUsername(event.target.value)} maxLength={20} placeholder="3–20 characters" autoFocus /><button disabled={!canSetUsername || !validFirstUsername || savingFirstUsername}>{savingFirstUsername ? 'Saving…' : canSetUsername ? 'Save username' : 'More than 0.1 balance required'}</button><button type="button" className="username-later" onClick={() => setDismissedUsername(true)}>Not now</button></form></div>}
     <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V20</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
     <div className="game-layout">
       <div className="arena-card">
