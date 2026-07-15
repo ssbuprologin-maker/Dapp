@@ -22,6 +22,8 @@ import {
 import { trackAnalytics } from './analytics'
 import ChatRail from './ChatRail'
 import ProfilePage from './ProfilePage'
+import dinoSkullUpper from './assets/dino-skull-upper.png'
+import dinoSkullJaw from './assets/dino-skull-jaw.png'
 
 const JOIN_FEE_SOL = 0.01
 const MIN_SOL = 0.01001
@@ -265,7 +267,7 @@ function App() {
 
   return <div className="shell">
     <header>
-      <button type="button" className="logo" onClick={() => { setShowProfile(false); setInGame(false); setProfileMenu(false) }}><span><i /><i /><i /></span>TESTNET GAMES</button>
+      <button type="button" className="logo" onClick={() => { setShowProfile(false); setInGame(false); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span>TESTNET GAMES</button>
       {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile statistics and menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} />
@@ -332,7 +334,7 @@ function App() {
 function Landing({ onConnect }: { onConnect: () => void }) {
   return <section className="landing">
     <div className="badge"><Sparkles /> SOLANA + MEGAETH TESTNET</div>
-    <h1><em>Sign up.</em></h1>
+    <h1 className="join-title">JOIN NOW</h1>
     <p>Connect Phantom or Solflare for Solana devnet, use MetaMask for MegaETH testnet, or create an encrypted Solana site wallet.</p>
     <button className="hero-button" onClick={onConnect}><Wallet /> CONNECT WALLET <ArrowRight /></button>
   </section>
