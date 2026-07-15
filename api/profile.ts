@@ -84,6 +84,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const key = profileKey(network, wallet)
     if (request.method === 'GET') {
       const profile = await redis.get<Profile>(key)
+      if (profile?.displayName) {
+        const label = `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
+        await redis.set(`testnet-games:profile-label:${network}:${label}`, profile.displayName)
+      }
       return response.status(200).json({ displayName: profile?.displayName ?? '', nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS })
     }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
@@ -102,6 +106,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (claimed !== 'OK') throw new Error('Name can only be changed once every 10 minutes.')
     const profile: Profile = { displayName, changedAt: Date.now() }
     await redis.set(key, profile)
+    const label = `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
+    await redis.set(`testnet-games:profile-label:${network}:${label}`, displayName)
     return response.status(200).json({ displayName, nextChangeAt: profile.changedAt + COOLDOWN_MS })
   } catch (error) {
     return response.status(400).json({ message: error instanceof Error ? error.message : 'Profile request failed.' })

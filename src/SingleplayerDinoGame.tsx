@@ -107,8 +107,9 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const [now, setNow] = useState(Date.now())
   const [paying, setPaying] = useState(false)
   const [paymentError, setPaymentError] = useState('')
-  const [leaderboard, setLeaderboard] = useState<ScoreRow[]>([])
-  const [leaderboardMode, setLeaderboardMode] = useState<'worldwide' | 'local'>('local')
+  const [worldwideScores, setWorldwideScores] = useState<ScoreRow[]>([])
+  const [localScores, setLocalScores] = useState<ScoreRow[]>([])
+  const [leaderboardMode, setLeaderboardMode] = useState<'worldwide' | 'local'>('worldwide')
   const [seed, setSeed] = useState(0)
   const [startAt, setStartAt] = useState<number | null>(null)
   const [y, setY] = useState(0)
@@ -125,14 +126,13 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
 
   useEffect(() => {
     let active = true
-    setLeaderboard(loadScores(address))
-    setLeaderboardMode('local')
+    setLocalScores(loadScores(address))
+    setLeaderboardMode('worldwide')
     const refreshWorldwide = () => {
       void worldwideLeaderboard()
         .then(scores => {
           if (!active) return
-          setLeaderboard(scores)
-          setLeaderboardMode('worldwide')
+          setWorldwideScores(scores)
         })
         .catch(() => { /* Local scores remain available until Redis is configured. */ })
     }
@@ -160,8 +160,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
       .slice(0, 10)
       .map((row, index) => ({ ...row, rank: index + 1 }))
     localStorage.setItem(storageKey(address), JSON.stringify(next.map(({ score: savedScore, playedAt, won, transaction, network }) => ({ score: savedScore, playedAt, won, transaction, network }))))
-    setLeaderboard(next)
-    setLeaderboardMode('local')
+    setLocalScores(next)
     if (entrySignatureRef.current) {
       void worldwideLeaderboard({
         wallet: address,
@@ -170,8 +169,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
         transaction: entrySignatureRef.current,
         network: paymentNetwork,
       }).then(scores => {
-        setLeaderboard(scores)
-        setLeaderboardMode('worldwide')
+        setWorldwideScores(scores)
       }).catch(() => { /* The run is still retained in the local fallback. */ })
     }
     setWinner(raceWinner)
@@ -348,6 +346,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const obstacles = elapsed < SAFE_START_MS ? [] : obstacleCourse
     .map(position => ({ position, left: 100 * (position - travel) / 900 }))
     .filter(obstacle => obstacle.left > -8 && obstacle.left < 108)
+  const leaderboard = leaderboardMode === 'worldwide' ? worldwideScores : localScores
 
   return <section className="game-page">
     <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V20</span><h1>Dino Run</h1></div><button onClick={onExit}>Leave game</button></div>
@@ -364,7 +363,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
-      <aside className="players-card"><div className="players-title"><div><span>{leaderboardMode === 'worldwide' ? 'UPSTASH REDIS' : 'THIS BROWSER'}</span><h2>{leaderboardMode === 'worldwide' ? 'Worldwide leaderboard' : 'Local high scores'}</h2></div><i className={leaderboardMode === 'worldwide' ? 'online' : ''} /></div><div className="leaderboard score-board">{leaderboard.length ? <><div className="score-header"><b>#</b><strong>PLAYER</strong><em>SCORE</em><span>WIN</span><i>TX</i></div>{leaderboard.map(row => <div key={`${row.transaction ?? row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{row.wallet ?? 'You'}</strong><em>{Math.floor(row.score / 1000)}m</em><span className={row.won ? 'win-yes' : 'win-no'}>{row.won ? 'Yes' : 'No'}</span>{row.transaction && row.network ? <a href={row.network === 'solana' ? `https://explorer.solana.com/tx/${row.transaction}?cluster=devnet` : `${MEGAETH_EXPLORER_URL}/tx/${row.transaction}`} target="_blank" rel="noreferrer" title={`Open ${row.network === 'solana' ? 'Solana Explorer' : 'MegaETH Blockscout'}`}>View</a> : <i>—</i>}</div>)}</> : <p>Finish a run to record the first score.</p>}</div><div className="server-note"><ShieldCheck /><p><strong>{leaderboardMode === 'worldwide' ? 'Worldwide scores' : 'Local fallback'}</strong><span>{leaderboardMode === 'worldwide' ? 'Paid entries are verified before Redis accepts a score.' : 'Add the Upstash variables in Vercel to enable worldwide rankings.'}</span></p></div></aside>
+      <aside className="players-card"><div className="players-title"><div><span>{leaderboardMode === 'worldwide' ? 'UPSTASH REDIS' : 'THIS BROWSER'}</span><h2>{leaderboardMode === 'worldwide' ? 'Worldwide leaderboard' : 'Local high scores'}</h2></div><i className={leaderboardMode === 'worldwide' ? 'online' : ''} /></div><div className="leaderboard-tabs"><button className={leaderboardMode === 'worldwide' ? 'active' : ''} onClick={() => setLeaderboardMode('worldwide')}>Worldwide</button><button className={leaderboardMode === 'local' ? 'active' : ''} onClick={() => setLeaderboardMode('local')}>Local</button></div><div className="leaderboard score-board">{leaderboard.length ? <><div className="score-header"><b>#</b><strong>PLAYER</strong><em>SCORE</em><span>WIN</span><i>TX</i></div>{leaderboard.map(row => <div key={`${row.transaction ?? row.playedAt}-${row.rank}`}><b>#{row.rank}</b><strong>{row.wallet ?? 'You'}</strong><em>{Math.floor(row.score / 1000)}m</em><span className={row.won ? 'win-yes' : 'win-no'}>{row.won ? 'Yes' : 'No'}</span>{row.transaction && row.network ? <a href={row.network === 'solana' ? `https://explorer.solana.com/tx/${row.transaction}?cluster=devnet` : `${MEGAETH_EXPLORER_URL}/tx/${row.transaction}`} target="_blank" rel="noreferrer" title={`Open ${row.network === 'solana' ? 'Solana Explorer' : 'MegaETH Blockscout'}`}>View</a> : <i>—</i>}</div>)}</> : <p>{leaderboardMode === 'worldwide' ? 'No worldwide scores yet.' : 'Finish a run to record the first local score.'}</p>}</div><div className="server-note"><ShieldCheck /><p><strong>{leaderboardMode === 'worldwide' ? 'Worldwide scores' : 'Local scores'}</strong><span>{leaderboardMode === 'worldwide' ? 'Paid entries are verified before Redis accepts a score.' : 'These scores are saved only in this browser.'}</span></p></div></aside>
     </div>
   </section>
 }
