@@ -37,6 +37,7 @@
 @media(max-width:760px){.first-name-card{grid-template-columns:1fr;align-items:stretch}}
 .score-board .leaderboard-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:0;background:transparent;color:#fff;font:500 8px DM Mono;text-align:left;cursor:pointer}.score-board .leaderboard-name:hover{color:var(--green);text-decoration:underline}
 body>.shell,body>#root>.shell{padding-top:76px}.shell>header{position:fixed;inset:0 0 auto 0;z-index:35}.chat-rail{top:76px;bottom:0}.shell>main{min-height:calc(100vh - 76px)}
+.logo{border:0;background:transparent;padding:0;cursor:pointer}
 .bot-dino{--player-color:#68a7ff;left:15%;filter:drop-shadow(0 0 10px #68a7ff66)}.bot-label{position:absolute;left:calc(15% + 4px);bottom:132px;color:#68a7ff;background:#111114;border:1px solid #68a7ff55;border-radius:3px;padding:2px 4px;font:500 6px DM Mono;transition:transform .07s linear}
 
 /* The body is a separate clipped layer so the legs can swing outside it. */
