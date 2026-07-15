@@ -5,9 +5,9 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transa
 import bs58 from 'bs58'
 import { ed25519 } from '@noble/curves/ed25519'
 import {
-  AlertTriangle, ArrowRight, Check, ChevronRight, Copy, Download, ExternalLink,
+  AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Copy, Download, ExternalLink,
   KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
-  Trash2, Wallet, X,
+  Settings, Trash2, Wallet, X,
 } from 'lucide-react'
 import {
   createEncryptedWallet, exportRecovery, forgetStoredWallet, hasStoredWallet,
@@ -29,6 +29,7 @@ const NAME_BALANCE = 0.1
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
 type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
+type ProfileSection = 'statistics' | 'transactions' | 'settings'
 
 function App() {
   const { connection } = useConnection()
@@ -48,6 +49,9 @@ function App() {
   const [nextNameChangeAt, setNextNameChangeAt] = useState(0)
   const [savingName, setSavingName] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
+  const [profileSection, setProfileSection] = useState<ProfileSection>('statistics')
+  const [profileMenu, setProfileMenu] = useState(false)
+  const [headerAvatar, setHeaderAvatar] = useState('')
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -57,6 +61,20 @@ function App() {
   // balance check. A wallet without enough SOL still cannot send the payment.
   const eligible = balanceUnavailable || (balance !== null && balance >= (isMegaEth ? MIN_MEGAETH : MIN_SOL))
   const connectionType = isMegaEth ? 'MetaMask' : localWallet ? 'Site wallet' : external.wallet?.adapter.name ?? 'External wallet'
+
+  useEffect(() => {
+    if (!walletAddress) { setHeaderAvatar(''); return }
+    const network = isMegaEth ? 'megaeth' : 'solana'
+    setHeaderAvatar(localStorage.getItem(`testnet-games:avatar:${network}:${walletAddress}`) ?? '')
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<{ wallet: string; network: string; avatar: string }>).detail
+      if (detail?.wallet === walletAddress && detail.network === network) setHeaderAvatar(detail.avatar)
+    }
+    window.addEventListener('profile-avatar-updated', update)
+    return () => window.removeEventListener('profile-avatar-updated', update)
+  }, [isMegaEth, walletAddress])
+
+  const openProfile = (section: ProfileSection) => { setProfileSection(section); setShowProfile(true); setProfileMenu(false); setInGame(false) }
 
   const refreshBalance = useCallback(async () => {
     if (!walletAddress) { setBalance(null); return }
@@ -200,13 +218,13 @@ function App() {
   return <div className="shell">
     <header>
       <a className="logo" href="/"><span><i /><i /><i /></span>TESTNET GAMES</a>
-      <div className="network"><i /> {isMegaEth ? 'MEGAETH TESTNET' : 'SOLANA DEVNET'}</div>
+      {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={() => setProfileMenu(value => !value)} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} />
 
     <main>
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showProfile && walletAddress ? (
-        <ProfilePage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onBack={() => setShowProfile(false)} />
+        <ProfilePage initialSection={profileSection} wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onBack={() => setShowProfile(false)} />
       ) : inGame && walletAddress ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onExit={() => setInGame(false)} />
       ) : (
@@ -236,7 +254,7 @@ function App() {
           nextNameChangeAt={nextNameChangeAt}
           savingName={savingName}
           onChangeName={changeDisplayName}
-          onProfile={() => setShowProfile(true)}
+          onProfile={() => openProfile('statistics')}
         />
       )}
     </main>
