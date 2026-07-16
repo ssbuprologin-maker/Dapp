@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useRef, useState, WheelEvent } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { Connection, PublicKey } from '@solana/web3.js'
 import solCoin from './assets/sol-coin-3d-v1.png'
 import ethCoin from './assets/eth-coin-3d-v1.png'
 import usdcCoin from './assets/usdc-coin-3d-v1.png'
 import metaMaskFox from './assets/metamask-fox-official.svg'
 
-const DEVNET_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
 type Coin = 'SOL' | 'ETH' | 'USDC'
 type Prices = { solUsd: number | null; ethUsd: number | null; usdcUsd: number; updatedAt: number }
 const coins: Coin[] = ['SOL', 'ETH', 'USDC']
@@ -24,11 +22,10 @@ function WalletMark({ icon, kind, name }: { icon?: string; kind: 'metamask' | 's
   </span>
 }
 
-export default function HeaderBalance({ balance, network, solanaWallet, connection, walletIcon, walletKind, walletName }: {
+export default function HeaderBalance({ balance, usdcBalance, network, walletIcon, walletKind, walletName }: {
   balance: number | null
+  usdcBalance: number
   network: 'solana' | 'megaeth'
-  solanaWallet: PublicKey | null
-  connection: Connection
   walletIcon?: string
   walletKind: 'metamask' | 'site' | 'external'
   walletName: string
@@ -38,7 +35,6 @@ export default function HeaderBalance({ balance, network, solanaWallet, connecti
   const [hovered, setHovered] = useState(false)
   const [open, setOpen] = useState(false)
   const [prices, setPrices] = useState<Prices | null>(null)
-  const [usdcBalance, setUsdcBalance] = useState<number | null>(null)
 
   useEffect(() => setSelected(network === 'solana' ? 'SOL' : 'ETH'), [network])
   useEffect(() => {
@@ -54,18 +50,7 @@ export default function HeaderBalance({ balance, network, solanaWallet, connecti
     refresh(); const timer = window.setInterval(refresh, 60_000)
     return () => { active = false; window.clearInterval(timer) }
   }, [])
-  useEffect(() => {
-    if (!solanaWallet) { setUsdcBalance(null); return }
-    let active = true
-    const refresh = () => void connection.getParsedTokenAccountsByOwner(solanaWallet, { mint: DEVNET_USDC_MINT })
-      .then(accounts => accounts.value.reduce((total, account) => total + Number((account.account.data as { parsed?: { info?: { tokenAmount?: { uiAmount?: number } } } }).parsed?.info?.tokenAmount?.uiAmount ?? 0), 0))
-      .then(value => { if (active) setUsdcBalance(value) })
-      .catch(() => { if (active) setUsdcBalance(null) })
-    refresh(); const timer = window.setInterval(refresh, 60_000)
-    return () => { active = false; window.clearInterval(timer) }
-  }, [connection, solanaWallet])
-
-  const balanceFor = (coin: Coin) => coin === 'USDC' ? usdcBalance ?? 0 : coin === 'SOL' ? (network === 'solana' ? balance ?? 0 : 0) : (network === 'megaeth' ? balance ?? 0 : 0)
+  const balanceFor = (coin: Coin) => coin === 'USDC' ? usdcBalance : coin === 'SOL' ? (network === 'solana' ? balance ?? 0 : 0) : (network === 'megaeth' ? balance ?? 0 : 0)
   const conversionFor = (coin: Coin) => {
     const value = balanceFor(coin)
     if (value === 0) return 0

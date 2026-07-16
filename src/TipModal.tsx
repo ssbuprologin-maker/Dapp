@@ -33,7 +33,7 @@ export default function TipModal({ sender, senderNetwork, target, localWallet, s
   signTransaction?: (transaction: Transaction) => Promise<Transaction>
   connection: Connection
   onClose: () => void
-  onSuccess: (message: string) => void
+  onSuccess: (message: string, amount: number) => void
 }) {
   const [amount, setAmount] = useState('')
   const [sending, setSending] = useState(false)
@@ -78,7 +78,7 @@ export default function TipModal({ sender, senderNetwork, target, localWallet, s
         }
       }
       setTransaction(signature)
-      onSuccess(`${amount} ${currency} tip sent to ${target.name}.`)
+      onSuccess(`${amount} ${currency} tip sent to ${target.name}.`, Number(units) / 10 ** (target.network === 'solana' ? 9 : 18))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Tip transaction failed.')
     } finally { setSending(false) }

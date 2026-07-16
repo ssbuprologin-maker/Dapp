@@ -143,6 +143,30 @@ function App() {
 
   useEffect(() => { refreshBalance() }, [refreshBalance])
   useEffect(() => {
+    if (!walletAddress) return
+    const timer = window.setInterval(() => void refreshBalance(), 5_000)
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void refreshBalance() }
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refreshWhenVisible); document.removeEventListener('visibilitychange', refreshWhenVisible) }
+  }, [refreshBalance, walletAddress])
+  useEffect(() => {
+    if (evmAddress || !publicKey) return
+    let subscription = 0
+    try {
+      subscription = connection.onAccountChange(publicKey, account => {
+        setBalance(account.lamports / LAMPORTS_PER_SOL)
+        setBalanceUnavailable(false)
+      }, 'confirmed')
+    } catch { /* The five-second refresh remains available if WebSocket subscriptions are unavailable. */ }
+    return () => { if (subscription) void connection.removeAccountChangeListener(subscription).catch(() => undefined) }
+  }, [connection, evmAddress, publicKey])
+  const recordConfirmedSpend = useCallback((amount: number) => {
+    setBalance(current => current === null ? current : Math.max(0, current - amount))
+    window.setTimeout(() => void refreshBalance(), 750)
+    window.setTimeout(() => void refreshBalance(), 3_000)
+  }, [refreshBalance])
+  useEffect(() => {
     if (!walletAddress) { setProfileLoaded(false); return }
     let active = true
     const network = isMegaEth ? 'megaeth' : 'solana'
@@ -344,7 +368,7 @@ function App() {
   return <div className={`shell ${accessScreen ? 'access-shell' : ''}`}>
     <header>
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setShowRewards(false); setInGame(connected); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
-      {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} network={isMegaEth ? 'megaeth' : 'solana'} solanaWallet={isMegaEth ? null : publicKey} connection={connection} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><button type="button" className={`header-rewards ${showRewards ? 'active' : ''}`} onClick={openRewards}><Gift /><span><strong>$0.00</strong><small>Rewards</small></span></button><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
+      {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><button type="button" className={`header-rewards ${showRewards ? 'active' : ''}`} onClick={openRewards}><Gift /><span><strong>$0.00</strong><small>Rewards</small></span></button><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} />
 
@@ -358,7 +382,7 @@ function App() {
       ) : showProfile && walletAddress && viewedProfile ? (
         <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onBack={() => setShowProfile(false)} />
       ) : displayName && walletAddress ? (
-        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} />
+        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} />
       ) : (
         <WalletView
           address={walletAddress!}
@@ -411,7 +435,7 @@ function App() {
       onCreated={async (wallet) => { await activateSiteWallet(wallet); setStep('backup') }}
       onUnlocked={async wallet => { await activateSiteWallet(wallet); setModal(false) }}
     />}
-    {tipTarget && connected && walletAddress && <TipModal sender={walletAddress} senderNetwork={isMegaEth ? 'megaeth' : 'solana'} target={tipTarget} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onClose={() => setTipTarget(null)} onSuccess={tipMessage => { setMessage(tipMessage); void refreshBalance() }} />}
+    {tipTarget && connected && walletAddress && <TipModal sender={walletAddress} senderNetwork={isMegaEth ? 'megaeth' : 'solana'} target={tipTarget} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onClose={() => setTipTarget(null)} onSuccess={(tipMessage, amount) => { setMessage(tipMessage); recordConfirmedSpend(amount) }} />}
     {message && <div className="toast">{message}<button onClick={() => setMessage('')}><X /></button></div>}
   </div>
 }

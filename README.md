@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V40
+# TESTNET GAMES - Dino Run Build V43
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -22,13 +22,17 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 
 Levels are based only on cumulative verified wagers measured in SOL-equivalent (`SOL-EQ`). SOL entries add their SOL amount directly. ETH entries use the remembered mainnet ETH-USD/SOL-USD ratio, so both currencies advance the same value-based curve. Redis keeps a high-water USD price for each asset, so credited progress never decreases. Approximate cumulative milestones are level 2 at 0.1 SOL-EQ, level 5 at 1.8 SOL-EQ, level 20 at 90 SOL-EQ, and level 30 at 450 SOL-EQ; levels above 30 require 6% more cumulative value per level until the level-100 cap.
 
-Global chat can be read by everyone, but the server grants Ably publish permission only after a wallet has completed three verified games.
+Global chat can be read by everyone, but the server grants Ably publish permission only after a wallet has completed three verified games. Messages are limited to 140 characters. New visitors load the newest 30 stored messages in chronological order; incoming messages are merged by message ID and the browser keeps only the newest 30. History is requested after the live subscription attaches with `untilAttach`, preventing messages sent during startup from falling into a history/realtime gap. Both chat-footer controls open the same placeholder Chat Rules dialog, ready for rules to be added later.
 
-Clicking an authenticated chat username opens actions for viewing that wallet's profile or tipping it. Tips are non-custodial, same-network native transfers: devnet SOL to Solana players or MegaETH testnet ETH to MegaETH players. The sender confirms the exact recipient and amount in Phantom, Solflare, MetaMask, or the browser-local site wallet. Tips are irreversible, have no house fee, and are not stored by the server. The recipient address comes from Ably's signed-in `clientId`, not client-supplied message data, to prevent a message from substituting another tipping address.
+Clicking anywhere on an authenticated chat message opens Reply, View profile, and Tip player actions. Clicking the avatar goes directly to the wallet's profile. Replies carry a short sanitized quote of the selected message. Tips are non-custodial, same-network native transfers: devnet SOL to Solana players or MegaETH testnet ETH to MegaETH players. The sender confirms the exact recipient and amount in Phantom, Solflare, MetaMask, or the browser-local site wallet. Tips are irreversible, have no house fee, and are not stored by the server. The recipient address comes from Ably's signed-in `clientId`, not client-supplied message data, to prevent a message from substituting another tipping address.
 
-Tall profile pictures have zoom and vertical-position controls before the cropped avatar is saved. Clicking the DINOGAME logo takes a connected player directly to the game screen. Chat messages use larger avatars, names, text, and message cards on desktop.
+Profile Settings includes a large clickable avatar tile with an edit-image badge, and tall pictures have zoom and vertical-position controls before the cropped avatar is saved. The level and XP progress card stays visible above every profile tab. Clicking the DINOGAME logo takes a connected player directly to the game screen. Chat messages use larger avatars, names, text, and message cards on desktop.
+
+Worldwide usernames are unique across Solana and MegaETH profiles. Name ownership is case-insensitive and claimed atomically in Redis, so `Player`, `player`, and `PLAYER` cannot belong to different wallets. Existing profiles are checked while the username-owner registry is populated lazily; changing a name releases the previous reservation after the profile is saved.
 
 The connected header includes a clickable and scrollable SOL, MegaETH ETH, and Solana-devnet USDC balance selector. Its compact purple dropdown uses project-local 3D coin renders, shows every supported balance and conversion, keeps zero values numeric, and places the connected wallet's real logo beside the selected balance. Solana wallets use their Anza adapter icon, while MetaMask uses the official locally stored fox asset. SOL/ETH hover values use live USD spot prices, while USDC hover shows its SOL equivalent. A compact Rewards tab currently opens a placeholder page for the future rewards configuration.
+
+Connected balances refresh every five seconds and whenever the browser tab regains focus. Confirmed game entries and tips deduct from the displayed native balance immediately, followed by RPC reconciliation after 750 milliseconds and three seconds. Solana native balances also use an account-change subscription when the RPC WebSocket is available; polling remains the fallback for Solana, USDC, and MegaETH.
 
 Access requires more than $8 of currently supported wallet value. Solana counts devnet SOL plus Circle devnet USDC; MegaETH counts testnet ETH. A signed worldwide username is required once per wallet before the dapp can be entered.
 
@@ -137,9 +141,12 @@ Install Command: npm install
 
 ```text
 PAYOUT_WALLET_PRIVATE_KEY=YOUR_BASE58_DEVNET_PRIVATE_KEY
+ABLY_API_KEY=YOUR_ABLY_ROOT_OR_SERVER_API_KEY
 ```
 
 `PAYOUT_WALLET_PRIVATE_KEY` must belong to the public receiver shown in the game. Add it only as a protected Vercel server variable. Do not use a `VITE_` prefix. The server rejects the key if it does not match the receiver and rejects any RPC that is not actually Solana devnet.
+
+For chat history, open the Ably dashboard for the app used by `ABLY_API_KEY`, create a channel rule matching `testnet-games-global-chat`, and enable **Persist all messages**. The code asks Ably for the newest 30 records, but Ably must persist the channel for those messages to remain available beyond its short default recovery window.
 
 You do not need to set `VITE_SOLANA_RPC_URL` or `SOLANA_RPC_URL`. Build V20 uses a free no-key transaction endpoint and automatically falls back to the official devnet endpoint. If free providers block balance reads, the balance displays `RPC BUSY` but play remains available; the signed entry transaction still rejects wallets that cannot cover 0.01 SOL plus the network fee.
 
@@ -147,7 +154,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V40`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V43`.
 
 ## Local development
 

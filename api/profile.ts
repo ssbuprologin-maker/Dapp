@@ -14,6 +14,7 @@ type LeaderboardRecord = { score: number; playedAt: number; won: boolean; transa
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
 const VERIFIED_WALLETS_KEY = 'testnet-games:verified-wallets:v1'
+const USERNAME_OWNER_PREFIX = 'testnet-games:username-owner:v1:'
 const MICROSOL = 1_000_000
 function requiredSolForLevel(level: number) {
   if (level <= 1) return 0
@@ -52,6 +53,40 @@ export function profileKey(network: Network, wallet: string) {
 
 function playerStatsKey(network: Network, wallet: string) {
   return `testnet-games:player-stats:${network}:${normalizedWallet(network, wallet)}`
+}
+
+const normalizedUsername = (displayName: string) => displayName.normalize('NFKC').toLowerCase()
+const usernameOwnerKey = (displayName: string) => `${USERNAME_OWNER_PREFIX}${encodeURIComponent(normalizedUsername(displayName))}`
+
+async function claimUniqueUsername(redis: Redis, displayName: string, owner: string) {
+  const wanted = normalizedUsername(displayName)
+  let cursor = '0'
+  do {
+    const [nextCursor, scanned] = await redis.scan(cursor, { match: 'testnet-games:profile:*', count: 200 })
+    cursor = nextCursor
+    const profileKeys = scanned.filter(key => key.split(':').length === 4)
+    if (!profileKeys.length) continue
+    const profiles = await redis.mget<(Profile | null)[]>(...profileKeys)
+    for (let index = 0; index < profileKeys.length; index += 1) {
+      const existing = profiles[index]
+      if (!existing?.displayName || normalizedUsername(existing.displayName) !== wanted) continue
+      const [, , existingNetwork, existingWallet] = profileKeys[index].split(':')
+      const existingOwner = `${existingNetwork}:${existingNetwork === 'megaeth' ? existingWallet.toLowerCase() : existingWallet}`
+      if (existingOwner !== owner) throw new Error('That username is already taken.')
+    }
+  } while (cursor !== '0')
+
+  const key = usernameOwnerKey(displayName)
+  const existingOwner = await redis.get<string>(key)
+  if (existingOwner && existingOwner !== owner) throw new Error('That username is already taken.')
+  if (existingOwner === owner) return false
+  const claimed = await redis.set(key, owner, { nx: true })
+  if (claimed !== 'OK') {
+    const winner = await redis.get<string>(key)
+    if (winner !== owner) throw new Error('That username is already taken.')
+    return false
+  }
+  return true
 }
 
 export function nameChangeMessage(network: Network, wallet: string, displayName: string, timestamp: number) {
@@ -177,16 +212,29 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (current?.displayName) await verifyBalance(network, wallet)
     const nextChangeAt = (current?.changedAt ?? 0) + COOLDOWN_MS
     if (current?.displayName && nextChangeAt > Date.now()) throw new Error(`Name can be changed again in ${Math.ceil((nextChangeAt - Date.now()) / 60_000)} minute(s).`)
-    const cooldownKey = `${key}:name-change-cooldown`
-    if (current?.displayName) {
-      const claimed = await redis.set(cooldownKey, '1', { nx: true, px: COOLDOWN_MS })
-      if (claimed !== 'OK') throw new Error('Name can only be changed once every 10 minutes.')
+    const owner = `${network}:${normalizedWallet(network, wallet)}`
+    const newlyClaimed = await claimUniqueUsername(redis, displayName, owner)
+    let profileSaved = false
+    try {
+      const cooldownKey = `${key}:name-change-cooldown`
+      if (current?.displayName) {
+        const claimed = await redis.set(cooldownKey, '1', { nx: true, px: COOLDOWN_MS })
+        if (claimed !== 'OK') throw new Error('Name can only be changed once every 10 minutes.')
+      }
+      const profile: Profile = { ...current, displayName, changedAt: Date.now() }
+      await redis.set(key, profile)
+      profileSaved = true
+      if (current?.displayName && normalizedUsername(current.displayName) !== normalizedUsername(displayName)) {
+        const previousKey = usernameOwnerKey(current.displayName)
+        if (await redis.get<string>(previousKey) === owner) await redis.del(previousKey)
+      }
+      const label = `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
+      await redis.set(`testnet-games:profile-label:${network}:${label}`, displayName)
+      return response.status(200).json({ displayName, nextChangeAt: profile.changedAt + COOLDOWN_MS })
+    } catch (error) {
+      if (newlyClaimed && !profileSaved) await redis.del(usernameOwnerKey(displayName))
+      throw error
     }
-    const profile: Profile = { ...current, displayName, changedAt: Date.now() }
-    await redis.set(key, profile)
-    const label = `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
-    await redis.set(`testnet-games:profile-label:${network}:${label}`, displayName)
-    return response.status(200).json({ displayName, nextChangeAt: profile.changedAt + COOLDOWN_MS })
   } catch (error) {
     return response.status(400).json({ message: error instanceof Error ? error.message : 'Profile request failed.' })
   }

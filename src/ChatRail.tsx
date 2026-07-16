@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import Ably from 'ably'
-import { BadgeCheck, MessageCircle, Send } from 'lucide-react'
+import { BadgeCheck, Info, MessageCircle, Reply, Send, X } from 'lucide-react'
 import { chatLevelTier } from './leveling'
 import type { TipTarget } from './TipModal'
 
 type Network = 'solana' | 'megaeth'
-type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number }
+type ReplyPreview = { id: string; name: string; message: string }
+type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number; replyTo?: ReplyPreview }
 const CHANNEL = 'testnet-games-global-chat'
 
 function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
@@ -16,7 +17,11 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   if ((network !== 'solana' && network !== 'megaeth') || !wallet) return null
   const data = message.data as Partial<ChatMessage>
   if (typeof data.id !== 'string' || typeof data.message !== 'string' || typeof data.sentAt !== 'number') return null
-  return { id: data.id, name: typeof data.name === 'string' ? data.name : `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: data.message.slice(0, 240), network, wallet, sentAt: data.sentAt }
+  const reply = data.replyTo
+  const replyTo = reply && typeof reply.id === 'string' && typeof reply.name === 'string' && typeof reply.message === 'string'
+    ? { id: reply.id.slice(0, 100), name: reply.name.slice(0, 40), message: reply.message.slice(0, 100) }
+    : undefined
+  return { id: data.id, name: typeof data.name === 'string' ? data.name : `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: data.message.slice(0, 140), network, wallet, sentAt: data.sentAt, replyTo }
 }
 
 export default function ChatRail({ wallet, network, displayName, onViewProfile, onTipPlayer }: { wallet: string | null; network: Network; displayName: string; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void }) {
@@ -30,6 +35,8 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
   const [verifiedProfiles, setVerifiedProfiles] = useState<Record<string, boolean>>({})
   const [profileNames, setProfileNames] = useState<Record<string, string>>({})
   const [selectedPlayer, setSelectedPlayer] = useState('')
+  const [replyingTo, setReplyingTo] = useState<ReplyPreview | null>(null)
+  const [showRules, setShowRules] = useState(false)
   const [gamesPlayed, setGamesPlayed] = useState(0)
   const [onlineCount, setOnlineCount] = useState(0)
   const feed = useRef<HTMLDivElement>(null)
@@ -62,7 +69,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
       if (!active || !ablyMessage.data || typeof ablyMessage.data !== 'object') return
       const item = authenticatedChatMessage(ablyMessage)
       if (!item) return
-      setMessages(current => current.some(existing => existing.id === item.id) ? current : [...current.slice(-99), item])
+      setMessages(current => current.some(existing => existing.id === item.id) ? current : [...current.slice(-29), item])
     }
     const updateOnlineCount = async () => {
       try {
@@ -74,8 +81,12 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
       await channel.presence.subscribe(updateOnlineCount)
       await channel.presence.enter({ network })
       await updateOnlineCount()
-      const history = await channel.history({ limit: 100, direction: 'forwards' })
-      if (active) setMessages(history.items.map(authenticatedChatMessage).filter((item): item is ChatMessage => Boolean(item)))
+      const history = await channel.history({ limit: 30, direction: 'backwards', untilAttach: true })
+      const historical = history.items.map(authenticatedChatMessage).filter((item): item is ChatMessage => Boolean(item)).reverse()
+      if (active) setMessages(current => {
+        const newestById = new Map([...historical, ...current].map(item => [item.id, item]))
+        return [...newestById.values()].sort((a, b) => a.sentAt - b.sentAt).slice(-30)
+      })
       setError('')
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
     client.connection.on('failed', state => setError(state.reason?.message ?? 'Live chat connection failed.'))
@@ -122,7 +133,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
     setSending(true); setError('')
     try {
       const normalizedWallet = network === 'megaeth' ? wallet.toLowerCase() : wallet
-      const record: ChatMessage = { id: `${Date.now()}-${crypto.randomUUID()}`, name: displayName || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: message.slice(0, 240), network, wallet: normalizedWallet, sentAt: Date.now() }
+      const record: ChatMessage = { id: `${Date.now()}-${crypto.randomUUID()}`, name: displayName || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: message.slice(0, 140), network, wallet: normalizedWallet, sentAt: Date.now(), replyTo: replyingTo ?? undefined }
       try {
         await channelRef.current.publish('chat-message', record)
       } catch (publishError) {
@@ -131,15 +142,29 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
         if (!channelRef.current) throw publishError
         await channelRef.current.publish('chat-message', record)
       }
-      lastSentAt.current = Date.now(); setDraft('')
+      lastSentAt.current = Date.now(); setDraft(''); setReplyingTo(null)
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not send message.') }
     finally { setSending(false) }
   }
 
   return <aside className="chat-rail">
     <div className="chat-title"><MessageCircle /><strong>GAME CHAT</strong><span className="online-count"><i />{onlineCount}</span></div>
-    <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => { const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network); const profileKey = item.wallet ? `${item.network}:${item.wallet}` : ''; const avatar = isOwn && ownAvatar ? ownAvatar : profileKey ? avatars[profileKey] : ''; const level = levels[profileKey] ?? 1; const verified = Boolean(verifiedProfiles[profileKey]); const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name); return <article key={item.id}><button className="chat-avatar" onClick={() => item.wallet && onViewProfile(item.wallet, item.network)} disabled={!item.wallet} title={item.wallet ? `View ${name}'s statistics` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button><div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={() => setSelectedPlayer(current => current === item.id ? '' : item.id)}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{item.message}</p></div><small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>{selectedPlayer === item.id && item.wallet && <div className="chat-user-menu"><button type="button" onClick={() => { setSelectedPlayer(''); onViewProfile(item.wallet!, item.network) }}>View profile</button><button type="button" disabled={isOwn} onClick={() => { setSelectedPlayer(''); onTipPlayer({ wallet: item.wallet!, network: item.network, name, avatar, level, verified }) }}>{isOwn ? 'Your wallet' : 'Tip player'}</button></div>}</article> }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
+    <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => {
+      const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network)
+      const profileKey = item.wallet ? `${item.network}:${item.wallet}` : ''
+      const avatar = isOwn && ownAvatar ? ownAvatar : profileKey ? avatars[profileKey] : ''
+      const level = levels[profileKey] ?? 1
+      const verified = Boolean(verifiedProfiles[profileKey])
+      const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
+      return <article key={item.id} onClick={() => setSelectedPlayer(current => current === item.id ? '' : item.id)}>
+        <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); setSelectedPlayer(current => current === item.id ? '' : item.id) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
+        <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
+        {selectedPlayer === item.id && item.wallet && <div className="chat-user-menu" onClick={event => event.stopPropagation()}><button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: item.message }); setSelectedPlayer('') }}><Reply /> Reply</button><button type="button" onClick={() => { setSelectedPlayer(''); onViewProfile(item.wallet!, item.network) }}>View profile</button><button type="button" disabled={isOwn} onClick={() => { setSelectedPlayer(''); onTipPlayer({ wallet: item.wallet!, network: item.network, name, avatar, level, verified }) }}>{isOwn ? 'Your wallet' : 'Tip player'}</button></div>}
+      </article>
+    }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
     {error && <div className="chat-error">{error}</div>}
-    <form className="chat-compose" onSubmit={send}><textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={240} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? `${draft.length}/240` : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div></form>
+    <form className="chat-compose" onSubmit={send}>{replyingTo && <div className="chat-reply-compose"><span>Replying to <strong>{replyingTo.name}</strong><small>{replyingTo.message}</small></span><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X /></button></div>}<textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={140} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? `${draft.length}/140` : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div><div className="chat-compose-tools"><button type="button" onClick={() => setShowRules(true)}><Info /> Chat Rules</button><button type="button" onClick={() => setShowRules(true)} aria-label="Open chat rules and character limit"><MessageCircle /> 140</button></div></form>
+    {showRules && <div className="chat-rules-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowRules(false) }}><section className="chat-rules-modal" role="dialog" aria-modal="true" aria-labelledby="chat-rules-title"><button type="button" onClick={() => setShowRules(false)} aria-label="Close chat rules"><X /></button><Info /><h2 id="chat-rules-title">Chat Rules</h2><div className="chat-rules-placeholder" /></section></div>}
   </aside>
 }

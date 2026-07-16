@@ -94,13 +94,14 @@ async function claimDevnetPayout(wallet: string, entrySignature: string) {
   return body
 }
 
-export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, onViewProfile, onExit }: {
+export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, onBalanceSpent, onViewProfile, onExit }: {
   address: string
   paymentNetwork: PaymentNetwork
   localWallet: Keypair | null
   sendTransaction: (transaction: Transaction, connection: Connection) => Promise<string>
   signTransaction?: (transaction: Transaction) => Promise<Transaction>
   connection: Connection
+  onBalanceSpent: (amount: number) => void
   onViewProfile: (wallet: string, network: PaymentNetwork) => void
   onExit: () => void
 }) {
@@ -287,6 +288,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
 
       const started = Date.now()
       entrySignatureRef.current = entrySignature
+      onBalanceSpent(0.01)
       trackAnalytics('game_transaction_confirmed', {
         network: paymentNetwork === 'solana' ? 'solana_devnet' : 'megaeth_testnet',
         currency: paymentNetwork === 'solana' ? 'SOL' : 'ETH',
@@ -316,7 +318,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
     } finally {
       setPaying(false)
     }
-  }, [address, connection, localWallet, paying, paymentNetwork, sendTransaction, signTransaction])
+  }, [address, connection, localWallet, onBalanceSpent, paying, paymentNetwork, sendTransaction, signTransaction])
 
   const reset = useCallback(() => {
     finishedRef.current = false
@@ -351,7 +353,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const leaderboard = leaderboardMode === 'worldwide' ? worldwideScores : localScores
 
   return <section className="game-page">
-    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V40</span><h1>Dino Run</h1></div><button onClick={onExit}>View profile</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V43</span><h1>Dino Run</h1></div><button onClick={onExit}>View profile</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
