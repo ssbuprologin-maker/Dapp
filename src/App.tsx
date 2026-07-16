@@ -8,7 +8,7 @@ import { sha256 } from '@noble/hashes/sha2'
 import {
   AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Copy, Download, ExternalLink,
   KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
-  Settings, Trash2, Wallet, X,
+  Settings, Share2, Trash2, Wallet, X,
 } from 'lucide-react'
 import {
   createEncryptedWallet, exportRecovery, forgetStoredWallet, hasStoredWallet,
@@ -22,6 +22,7 @@ import {
 import { trackAnalytics } from './analytics'
 import ChatRail from './ChatRail'
 import ProfilePage from './ProfilePage'
+import AffiliatesPage from './AffiliatesPage'
 import dinoSkullUpper from './assets/dino-skull-upper.png'
 import dinoSkullJaw from './assets/dino-skull-jaw-v2.png'
 
@@ -53,6 +54,7 @@ function App() {
   const [nextNameChangeAt, setNextNameChangeAt] = useState(0)
   const [savingName, setSavingName] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
+  const [showAffiliates, setShowAffiliates] = useState(false)
   const [profileSection, setProfileSection] = useState<ProfileSection>('statistics')
   const [profileMenu, setProfileMenu] = useState(false)
   const [headerAvatar, setHeaderAvatar] = useState('')
@@ -88,9 +90,10 @@ function App() {
     return () => window.removeEventListener('profile-avatar-updated', update)
   }, [isMegaEth, walletAddress])
 
-  const openProfile = (section: ProfileSection) => { if (walletAddress) setViewedProfile({ wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana' }); setProfileSection(section); setShowProfile(true); setProfileMenu(false); setInGame(false) }
-  const openProfileButton = () => { if (walletAddress) setViewedProfile({ wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana' }); setProfileSection('statistics'); setShowProfile(true); setInGame(false); setProfileMenu(value => !value) }
-  const viewChatProfile = (wallet: string, network: 'solana' | 'megaeth') => { setViewedProfile({ wallet, network }); setProfileSection('statistics'); setShowProfile(true); setProfileMenu(false); setInGame(false) }
+  const openProfile = (section: ProfileSection) => { if (walletAddress) setViewedProfile({ wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana' }); setProfileSection(section); setShowProfile(true); setShowAffiliates(false); setProfileMenu(false); setInGame(false) }
+  const openProfileButton = () => { if (walletAddress) setViewedProfile({ wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana' }); setProfileSection('statistics'); setShowProfile(true); setShowAffiliates(false); setInGame(false); setProfileMenu(value => !value) }
+  const openAffiliates = () => { setShowAffiliates(true); setShowProfile(false); setInGame(false); setProfileMenu(false) }
+  const viewChatProfile = (wallet: string, network: 'solana' | 'megaeth') => { setViewedProfile({ wallet, network }); setProfileSection('statistics'); setShowProfile(true); setShowAffiliates(false); setProfileMenu(false); setInGame(false) }
 
   const refreshBalance = useCallback(async () => {
     if (!walletAddress) { setBalance(null); return }
@@ -114,10 +117,14 @@ function App() {
   useEffect(() => { refreshBalance() }, [refreshBalance])
   useEffect(() => {
     if (!walletAddress) return
+    let active = true
     const network = isMegaEth ? 'megaeth' : 'solana'
+    setDisplayName('')
+    setNextNameChangeAt(0)
     fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
       .then(async response => response.ok ? response.json() as Promise<{ displayName?: string; nextChangeAt?: number; avatarUrl?: string }> : Promise.reject())
       .then(profile => {
+        if (!active) return
         setDisplayName(profile.displayName ?? ''); setNextNameChangeAt(profile.nextChangeAt ?? 0)
         if (profile.avatarUrl) {
           setHeaderAvatar(profile.avatarUrl)
@@ -125,7 +132,8 @@ function App() {
           window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana', avatar: profile.avatarUrl } }))
         }
       })
-      .catch(() => { setDisplayName(''); setNextNameChangeAt(0) })
+      .catch(() => { if (active) { setDisplayName(''); setNextNameChangeAt(0) } })
+    return () => { active = false }
   }, [isMegaEth, walletAddress])
 
   const changeDisplayName = async (name: string) => {
@@ -241,6 +249,11 @@ function App() {
       const accounts = Array.isArray(args[0]) ? args[0] as string[] : []
       setEvmAddress(accounts[0] ?? null)
       setBalance(null)
+      setDisplayName('')
+      setHeaderAvatar('')
+      setShowProfile(false)
+      setShowAffiliates(false)
+      setInGame(false)
     }
     const chainChanged = () => { if (evmAddress) void refreshBalance() }
     provider.on('accountsChanged', accountsChanged)
@@ -252,12 +265,32 @@ function App() {
   }, [evmAddress, refreshBalance])
 
   const disconnect = async () => {
+    const metaMaskProvider = evmAddress ? getMetaMaskProvider() : null
     localStorage.removeItem('testnet-games:last-wallet')
     setShowProfile(false)
+    setShowAffiliates(false)
+    setInGame(false)
+    setProfileMenu(false)
+    setViewedProfile(null)
+    setDisplayName('')
+    setNextNameChangeAt(0)
+    setHeaderAvatar('')
+    setMessage('')
     setEvmAddress(null)
     setLocalWallet(null)
-    if (external.connected) await external.disconnect()
+    setPendingWallet(null)
     setBalance(null)
+    setBalanceUnavailable(false)
+    try {
+      if (external.connected) await external.disconnect()
+      external.select(null)
+      if (metaMaskProvider) {
+        await metaMaskProvider.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] }).catch(() => undefined)
+      }
+    } finally {
+      setStep('choose')
+      setModal(true)
+    }
   }
 
   const copyAddress = async () => {
@@ -268,13 +301,15 @@ function App() {
 
   return <div className="shell">
     <header>
-      <button type="button" className="logo" onClick={() => { setShowProfile(false); setInGame(false); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
-      {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile statistics and menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
+      <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setInGame(false); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
+      {connected && walletAddress ? <div className="header-profile"><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile statistics and menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><div><strong>{displayName || short(walletAddress)}</strong><small>{isMegaEth ? 'MEGAETH' : 'SOLANA'}</small></div><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} />
 
     <main>
-      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showProfile && walletAddress && viewedProfile ? (
+      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showAffiliates && walletAddress ? (
+        <AffiliatesPage wallet={walletAddress} onBack={() => setShowAffiliates(false)} />
+      ) : showProfile && walletAddress && viewedProfile ? (
         <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onBack={() => setShowProfile(false)} />
       ) : inGame && walletAddress ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onViewProfile={viewChatProfile} onExit={() => setInGame(false)} />

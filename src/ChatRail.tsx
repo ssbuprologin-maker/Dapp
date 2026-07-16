@@ -19,6 +19,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
   const [onlineCount, setOnlineCount] = useState(0)
   const feed = useRef<HTMLDivElement>(null)
   const channelRef = useRef<Ably.RealtimeChannel | null>(null)
+  const clientRef = useRef<Ably.Realtime | null>(null)
   const lastSentAt = useRef(0)
   const requestedAvatars = useRef(new Set<string>())
   const canChat = Boolean(wallet && gamesPlayed >= 3)
@@ -39,6 +40,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
     let active = true
     const query = wallet ? `?network=${network}&wallet=${encodeURIComponent(wallet)}` : ''
     const client = new Ably.Realtime({ authUrl: `/api/chat-token${query}` })
+    clientRef.current = client
     const channel = client.channels.get(CHANNEL)
     channelRef.current = channel
     const receive = (ablyMessage: Ably.Message) => {
@@ -61,7 +63,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
       setError('')
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
     client.connection.on('failed', state => setError(state.reason?.message ?? 'Live chat connection failed.'))
-    return () => { active = false; channelRef.current = null; void channel.presence.leave(); client.close() }
+    return () => { active = false; channelRef.current = null; if (clientRef.current === client) clientRef.current = null; void channel.presence.leave(); client.close() }
   }, [canChat, network, wallet])
 
   useEffect(() => {
@@ -103,7 +105,14 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
     try {
       const normalizedWallet = network === 'megaeth' ? wallet.toLowerCase() : wallet
       const record: ChatMessage = { id: `${Date.now()}-${crypto.randomUUID()}`, name: displayName || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: message.slice(0, 240), network, wallet: normalizedWallet, sentAt: Date.now() }
-      await channelRef.current.publish('chat-message', record)
+      try {
+        await channelRef.current.publish('chat-message', record)
+      } catch (publishError) {
+        if (!/publish.*capability|capability.*publish/i.test(publishError instanceof Error ? publishError.message : String(publishError)) || !clientRef.current) throw publishError
+        await clientRef.current.auth.authorize()
+        if (!channelRef.current) throw publishError
+        await channelRef.current.publish('chat-message', record)
+      }
       lastSentAt.current = Date.now(); setDraft('')
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not send message.') }
     finally { setSending(false) }

@@ -134,6 +134,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
         } catch { /* Ignore malformed legacy rows. */ }
       })
       const games = [...gamesByTransaction.values()].sort((a, b) => b.playedAt - a.playedAt)
+      const gamesPlayed = Math.max(games.length, Number(progression?.games ?? 0))
       const wagerEquivalentSol = Number(progression?.wager_microsol ?? 0) / MICROSOL
       const level = levelFromWager(wagerEquivalentSol)
       const currentLevelWager = requiredSolForLevel(level)
@@ -144,8 +145,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
         level, wagerEquivalentSol, wagerIntoLevelSol: level >= 100 ? 0 : wagerEquivalentSol - currentLevelWager,
         wagerForNextLevelSol: level >= 100 ? 0 : nextLevelWager - currentLevelWager,
         stats: {
-          gamesPlayed: games.length, wins: Number(progression?.wins ?? 0), losses: Number(progression?.losses ?? 0), bestScore: Number(progression?.best_score ?? 0),
-          solWagered: network === 'solana' ? games.length * 0.01 : 0, ethWagered: network === 'megaeth' ? games.length * 0.01 : 0,
+          gamesPlayed, wins: Number(progression?.wins ?? 0), losses: Number(progression?.losses ?? 0), bestScore: Number(progression?.best_score ?? 0),
+          solWagered: network === 'solana' ? gamesPlayed * 0.01 : 0, ethWagered: network === 'megaeth' ? gamesPlayed * 0.01 : 0,
         },
         transactions: games.slice(0, 25).map(game => ({ hash: game.transaction, network: game.network, playedAt: game.playedAt, score: game.score, won: game.won })),
       })
