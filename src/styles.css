@@ -117,3 +117,17 @@ body>.shell,body>#root>.shell{padding-top:76px}.shell>header{position:fixed;inse
 @media(min-width:901px){.profile-menu{width:248px;padding:11px;border-radius:12px}.profile-menu>div{padding:12px 13px 14px}.profile-menu>button{height:57px;padding:0 14px;gap:13px;border:1px solid #24242a;border-radius:9px;margin:7px 0;background:#19191d;color:#85838b;font-size:15px;font-weight:900}.profile-menu>button:hover{border-color:#3b3546}.profile-menu>button:last-child{border:1px solid #51252b!important;border-radius:9px!important;background:#35191d;color:#ff3f52}.profile-menu svg{width:21px;height:21px}}
 @media(max-width:1000px){.affiliate-content{grid-template-columns:1fr}.affiliate-banner-section,.affiliate-overview,.affiliate-depositors{grid-column:1}.affiliate-banner-section{grid-row:auto;padding-top:0}.affiliate-code-row{grid-template-columns:1fr}.affiliate-hero{padding-left:5%;padding-right:5%}}
 @media(max-width:620px){.affiliates-page{padding-left:10px;padding-right:10px}.affiliate-hero{min-height:0;padding:45px 14px}.affiliate-hero h1{font-size:43px}.affiliate-hero>p{font-size:12px}.affiliate-code-row{margin-top:35px}.affiliate-code-row form,.affiliate-code-row>div{height:58px}.affiliate-code-row>div>span{display:none}.affiliate-code-row button{padding:0 15px}.affiliate-stats article{min-height:105px;padding:18px}.affiliate-chart{min-height:370px}.depositor-head{grid-template-columns:1fr 1fr}.depositor-head span:nth-child(n+3){display:none}}
+
+/* Compact desktop chat proportions matched to the supplied chat reference. */
+@media(min-width:901px){
+  .chat-feed{padding:6px 8px}
+  .chat-feed article{min-height:66px;grid-template-columns:35px minmax(0,1fr);column-gap:8px;margin:5px 0;padding:10px 8px;border-radius:8px}
+  .chat-avatar{width:35px;height:35px;border-width:1px;border-radius:9px;font-size:10px;box-shadow:0 0 0 2px #282b31,inset 0 0 8px #00f5d410}
+  .chat-message header{min-height:21px;gap:6px}
+  .chat-message header>span{gap:6px}
+  .chat-message header strong{font-size:13px;font-weight:900;letter-spacing:-.02em}
+  .chat-message header .chat-level{width:29px;height:21px;border-radius:5px;font-size:9px}
+  .chat-level-rainbow:after{inset:1px;border-radius:4px}
+  .chat-message time{padding:4px 6px;border-radius:6px;font-size:9px}
+  .chat-message p{margin-top:4px;font-size:10px;line-height:1.35}
+}
