@@ -137,3 +137,38 @@ body>.shell,body>#root>.shell{padding-top:76px}.shell>header{position:fixed;inse
   .chat-message time{padding:4px 6px;border-radius:6px;font-size:9px}
   .chat-message p{margin-top:4px;font-size:10px;line-height:1.35}
 }
+
+/* Clickable header asset dropdown with the connected wallet mark. */
+.header-balance{width:205px;z-index:70}
+.header-balance-main{grid-template-columns:30px minmax(0,1fr) auto 14px 32px;height:46px;padding:0 7px 0 9px;border-color:#664b8d;background:linear-gradient(110deg,#241632,#121219)}
+.header-balance-main.show-conversion{grid-template-columns:30px minmax(0,1fr) 14px 32px}
+.header-balance-main>svg{transition:transform .16s}
+.header-balance.menu-open .header-balance-main>svg{transform:rotate(180deg)}
+.header-wallet-mark{width:30px;height:30px;display:grid;place-items:center;overflow:hidden;border:1px solid #9b6cff;border-radius:8px;background:linear-gradient(145deg,#7564d8,#a48cff);box-shadow:inset 0 0 0 2px #ffffff30}
+.header-wallet-mark img{width:22px;height:22px;object-fit:contain}
+.header-wallet-mark b{font:800 12px Inter,sans-serif}
+.header-wallet-mark.wallet-metamask b{font-size:17px;line-height:1}
+.header-balance-menu{position:absolute;top:calc(100% + 10px);right:0;width:310px;padding:12px;border:1px solid #24252b;border-radius:12px;background:#17171b;box-shadow:0 20px 55px #000c,0 0 0 1px #ffffff05;z-index:90}
+.header-balance-menu>strong{display:block;margin:1px 0 10px;color:#9999a0;font:800 12px Inter,sans-serif;text-align:left}
+.header-balance-menu>button{width:100%;min-height:64px;display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:11px;margin:7px 0;padding:8px 11px;border:1px solid #29282e;border-radius:9px;background:#19191c;color:#fff;cursor:pointer;text-align:left;transition:border-color .14s,background .14s,transform .14s}
+.header-balance-menu>button:hover,.header-balance-menu>button:focus-visible{border-color:#67517f;background:#221b2a;transform:translateX(2px);outline:0}
+.header-balance-menu>button.active{border-color:#8b58bd;background:linear-gradient(100deg,#2b1740,#31203f)}
+.header-balance-menu .header-coin-icon{width:38px;height:38px}
+.header-balance-menu .coin-sol span{left:8px;width:21px;height:4px}.header-balance-menu .coin-sol span:first-child{top:10px}.header-balance-menu .coin-sol span:nth-child(2){top:17px}.header-balance-menu .coin-sol span:last-child{top:24px}
+.header-balance-menu>button>span{min-width:0}.header-balance-menu>button b,.header-balance-menu>button em{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.header-balance-menu>button b{color:#aaa9af;font:800 10px Inter,sans-serif}.header-balance-menu>button.active b{color:#fff}.header-balance-menu>button em{margin-top:4px;color:#fff;font:900 13px DM Mono;font-style:normal}.header-balance-menu>button>small{color:#787781;font:800 10px DM Mono;white-space:nowrap}
+@media(max-width:760px){.header-balance{width:150px}.header-balance-main{grid-template-columns:25px minmax(0,1fr) 11px 28px;padding-inline:6px}.header-balance-main.show-conversion{grid-template-columns:25px minmax(0,1fr) 11px 28px}.header-wallet-mark{width:27px;height:27px}.header-wallet-mark img{width:20px;height:20px}.header-balance-menu{width:min(290px,calc(100vw - 18px))}}
+@media(max-width:500px){.header-balance{width:125px}.header-balance-main{grid-template-columns:23px minmax(0,1fr) 9px 25px}.header-balance-main.show-conversion{grid-template-columns:23px minmax(0,1fr) 9px 25px}.header-wallet-mark{width:24px;height:24px;border-radius:6px}.header-wallet-mark img{width:18px;height:18px}.header-balance-menu{right:-42px}.header-balance-menu>button{min-height:58px}}
+
+/* Final compact balance pill proportions from the supplied reference. */
+.header-balance{width:220px}
+.header-balance-main,.header-balance-main.show-conversion{height:50px;grid-template-columns:32px minmax(0,1fr) 16px 36px;gap:8px;padding:0 6px 0 10px;border:2px solid #b968e7;border-radius:11px;background:linear-gradient(105deg,#241733,#17141f 72%);box-shadow:inset 0 0 0 1px #ffffff0c,inset 0 0 20px #8d47c71a,0 3px 12px #0008}
+.header-balance-main:hover,.header-balance-main.show-conversion{border-color:#ce7cf4;background:linear-gradient(105deg,#2d1940,#17141f 72%);box-shadow:inset 0 0 22px #a653e52a,0 0 12px #aa51df35}
+.header-balance-main>strong{font:900 16px DM Mono;color:#fff;letter-spacing:-.04em;text-shadow:0 1px #000}
+.header-balance-main>svg{width:16px;height:16px;color:#77727f;stroke-width:3}
+.header-coin-icon{width:32px;height:32px;overflow:visible;border:0;background:transparent;box-shadow:none}
+.header-coin-icon img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 2px 3px #000b)}
+.header-wallet-mark{width:36px;height:36px;border:2px solid #b998ff;border-radius:9px;background:linear-gradient(145deg,#6654ca,#a291ff);box-shadow:inset 0 0 0 2px #ffffff40,0 0 8px #9669f540}
+.header-wallet-mark img{width:25px;height:25px}
+.header-balance-menu .header-coin-icon{width:42px;height:42px}
+@media(max-width:760px){.header-balance{width:172px}.header-balance-main,.header-balance-main.show-conversion{height:44px;grid-template-columns:27px minmax(0,1fr) 12px 30px;gap:5px;padding-left:7px}.header-balance-main>strong{font-size:11px}.header-coin-icon{width:27px;height:27px}.header-wallet-mark{width:30px;height:30px}.header-wallet-mark img{width:21px;height:21px}}
+@media(max-width:500px){.header-balance{width:145px}.header-balance-main,.header-balance-main.show-conversion{grid-template-columns:25px minmax(0,1fr) 10px 27px}.header-balance-main>strong{font-size:9px}.header-wallet-mark{width:27px;height:27px}}

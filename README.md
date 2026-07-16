@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V32
+# TESTNET GAMES - Dino Run Build V35
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -24,7 +24,7 @@ Levels are based only on cumulative verified wagers measured in SOL-equivalent (
 
 Global chat can be read by everyone, but the server grants Ably publish permission only after a wallet has completed three verified games.
 
-The connected header includes a scrollable SOL, MegaETH ETH, and Solana-devnet USDC balance selector. SOL/ETH hover values use live USD spot prices, while USDC hover shows its SOL equivalent.
+The connected header includes a clickable and scrollable SOL, MegaETH ETH, and Solana-devnet USDC balance selector. Its compact purple dropdown uses project-local 3D coin renders, shows every supported balance and conversion, keeps zero values numeric, and places the connected wallet logo beside the selected balance. SOL/ETH hover values use live USD spot prices, while USDC hover shows its SOL equivalent.
 
 Access requires more than $8 of currently supported wallet value. Solana counts devnet SOL plus Circle devnet USDC; MegaETH counts testnet ETH. A signed worldwide username is required once per wallet before the dapp can be entered.
 
@@ -126,7 +126,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V32`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V35`.
 
 ## Local development
 
