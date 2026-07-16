@@ -7,6 +7,7 @@ import type { TipTarget } from './TipModal'
 type Network = 'solana' | 'megaeth'
 type ReplyPreview = { id: string; name: string; message: string }
 type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number; replyTo?: ReplyPreview }
+export type ReplyNotification = { id: string; senderName: string; message: string; wallet: string; network: Network; receivedAt: number; read: boolean }
 const CHANNEL = 'testnet-games-global-chat'
 const CHAT_CACHE_KEY = 'testnet-games:chat-cache:v1'
 
@@ -46,7 +47,7 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   return normalizeChatMessage(message.data as Partial<ChatMessage>, network, wallet)
 }
 
-export default function ChatRail({ wallet, network, displayName, onViewProfile, onTipPlayer }: { wallet: string | null; network: Network; displayName: string; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void }) {
+export default function ChatRail({ wallet, network, displayName, onViewProfile, onTipPlayer, onReplyNotification }: { wallet: string | null; network: Network; displayName: string; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -67,6 +68,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
   const lastSentAt = useRef(0)
   const requestedAvatars = useRef(new Set<string>())
   const cacheHydrated = useRef(false)
+  const ownMessageIds = useRef(new Set<string>())
   const canChat = Boolean(wallet && gamesPlayed >= 3)
   const remainingCharacters = Math.max(0, 140 - draft.length)
 
@@ -99,6 +101,10 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
       if (!active || !ablyMessage.data || typeof ablyMessage.data !== 'object') return
       const item = authenticatedChatMessage(ablyMessage)
       if (!item) return
+      const normalizedWallet = network === 'megaeth' ? wallet?.toLowerCase() : wallet
+      if (item.replyTo && normalizedWallet && item.wallet !== normalizedWallet && ownMessageIds.current.has(item.replyTo.id)) {
+        onReplyNotification({ id: item.id, senderName: item.name, message: item.message, wallet: item.wallet!, network: item.network, receivedAt: Date.now(), read: false })
+      }
       setMessages(current => keepNewest30([...current, item]))
     }
     const updateOnlineCount = async () => {
@@ -134,7 +140,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
     client.connection.on('failed', state => setError(state.reason?.message ?? 'Live chat connection failed.'))
     return () => { active = false; channelRef.current = null; if (clientRef.current === client) clientRef.current = null; void channel.presence.leave(); client.close() }
-  }, [canChat, network, wallet])
+  }, [canChat, network, onReplyNotification, wallet])
 
   useEffect(() => {
     if (!wallet) { setOwnAvatar(''); return }
@@ -155,6 +161,10 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
     if (!messages.length && cachedMessages().length) return
     try { localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify(keepNewest30(messages))) } catch { /* Cache is optional. */ }
   }, [messages])
+  useEffect(() => {
+    const normalizedWallet = network === 'megaeth' ? wallet?.toLowerCase() : wallet
+    ownMessageIds.current = new Set(messages.filter(item => item.wallet === normalizedWallet && item.network === network).map(item => item.id))
+  }, [messages, network, wallet])
 
   useEffect(() => {
     for (const item of messages) {

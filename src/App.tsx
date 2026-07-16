@@ -7,7 +7,7 @@ import { ed25519 } from '@noble/curves/ed25519'
 import { sha256 } from '@noble/hashes/sha2'
 import {
   AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Copy, Download, ExternalLink,
-  Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
+  Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
   Settings, Share2, Trash2, Wallet, X,
 } from 'lucide-react'
 import {
@@ -20,7 +20,7 @@ import {
   connectMetaMask, getMegaEthBalance, getMetaMaskProvider, MEGAETH_FAUCET_URL,
 } from './megaEth'
 import { trackAnalytics } from './analytics'
-import ChatRail from './ChatRail'
+import ChatRail, { type ReplyNotification } from './ChatRail'
 import ProfilePage from './ProfilePage'
 import AffiliatesPage from './AffiliatesPage'
 import HeaderBalance from './HeaderBalance'
@@ -39,6 +39,7 @@ const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
 type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
 type ProfileSection = 'statistics' | 'transactions' | 'settings'
+const NOTIFICATIONS_CACHE_KEY = 'testnet-games:notifications:v1'
 
 function App() {
   const { connection } = useConnection()
@@ -69,6 +70,10 @@ function App() {
   const [headerAvatar, setHeaderAvatar] = useState('')
   const [viewedProfile, setViewedProfile] = useState<{ wallet: string; network: 'solana' | 'megaeth' } | null>(null)
   const [tipTarget, setTipTarget] = useState<TipTarget | null>(null)
+  const [notifications, setNotifications] = useState<ReplyNotification[]>(() => {
+    try { return JSON.parse(localStorage.getItem(NOTIFICATIONS_CACHE_KEY) ?? '[]') as ReplyNotification[] } catch { return [] }
+  })
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -81,6 +86,12 @@ function App() {
     && balance >= (isMegaEth ? MIN_MEGAETH : MIN_SOL)
     && walletUsdValue !== null && walletUsdValue > MIN_WALLET_USD
   const connectionType = isMegaEth ? 'MetaMask' : localWallet ? 'Site wallet' : external.wallet?.adapter.name ?? 'External wallet'
+  const unreadNotifications = notifications.filter(notification => !notification.read).length
+
+  useEffect(() => { try { localStorage.setItem(NOTIFICATIONS_CACHE_KEY, JSON.stringify(notifications.slice(0, 30))) } catch { /* Notifications are optional browser state. */ } }, [notifications])
+  const addReplyNotification = useCallback((notification: ReplyNotification) => {
+    setNotifications(current => current.some(item => item.id === notification.id) ? current : [notification, ...current].slice(0, 30))
+  }, [])
 
   useEffect(() => {
     if (localStorage.getItem('testnet-games:last-wallet') !== 'metamask') return
@@ -368,9 +379,9 @@ function App() {
   return <div className={`shell ${accessScreen ? 'access-shell' : ''}`}>
     <header>
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setShowRewards(false); setInGame(connected); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
-      {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><button type="button" className={`header-rewards ${showRewards ? 'active' : ''}`} onClick={openRewards}><Gift /><span><strong>$0.00</strong><small>Rewards</small></span></button><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
+      {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><button type="button" className={`header-rewards ${showRewards ? 'active' : ''}`} onClick={openRewards}><Gift /><span><strong>$0.00</strong><small>Rewards</small></span></button><div className="header-notifications"><button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>{notificationsOpen && <div className="header-notification-menu"><header><strong>Notifications</strong>{unreadNotifications > 0 && <button type="button" onClick={() => setNotifications(current => current.map(notification => ({ ...notification, read: true })))}>Mark read</button>}</header>{notifications.length ? <div>{notifications.map(notification => <button type="button" key={notification.id} className={notification.read ? '' : 'unread'} onClick={() => { setNotifications(current => current.map(item => item.id === notification.id ? { ...item, read: true } : item)); setNotificationsOpen(false); viewChatProfile(notification.wallet, notification.network) }}><Bell /><span><strong>{notification.senderName} replied to your message</strong><small>{notification.message}</small></span></button>)}</div> : <p>No notifications</p>}</div>}</div><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
-    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} />
+    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} />
 
     <main>
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : !profileLoaded && walletAddress ? (

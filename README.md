@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V47
+# TESTNET GAMES - Dino Run Build V49
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -21,7 +21,9 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - Browser cache key `testnet-games:chat-cache:v1` is a recovery layer. `ChatRail.tsx` hydrates it on mount and wallet/network changes. It must never overwrite an existing non-empty cache with an empty transient state during logout or reconnect.
 - The UI merges Redis history, Ably history, browser cache, and live messages by message ID, sorts by timestamp, and displays at most 30 messages.
 - Messages are limited at three layers: textarea `maxLength={140}`, UI state truncation, and server/history normalization. The chat footer displays remaining characters (`140` down to `0`), not characters used. Keep ordinary spaces working in chat messages.
+- The game listens for Space/ArrowUp to jump, but its global keyboard handler must ignore focused inputs, textareas, selects, and content-editable elements. Otherwise it blocks spaces while chat is focused.
 - Clicking a chat message opens Reply, View profile, and Tip player. Clicking an avatar opens that profile immediately. Reply data is a short sanitized quote.
+- Header notifications are browser-local for now. A live reply to one of the current wallet's messages creates an unread reply notification. Clicking it marks it read and opens the sender's profile. Keep this notification list extensible for future types.
 - Chat rules controls intentionally open an empty placeholder modal. Do not invent rules/content until asked.
 
 ### Critical source map
@@ -247,7 +249,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V47`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V49`.
 
 ## Local development
 
