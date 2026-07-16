@@ -8,6 +8,34 @@ type Network = 'solana' | 'megaeth'
 type ReplyPreview = { id: string; name: string; message: string }
 type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number; replyTo?: ReplyPreview }
 const CHANNEL = 'testnet-games-global-chat'
+const CHAT_CACHE_KEY = 'testnet-games:chat-cache:v1'
+
+function normalizeChatMessage(data: Partial<ChatMessage>, network: Network, wallet: string): ChatMessage | null {
+  if (typeof data.id !== 'string' || typeof data.message !== 'string' || typeof data.sentAt !== 'number') return null
+  const reply = data.replyTo
+  const replyTo = reply && typeof reply.id === 'string' && typeof reply.name === 'string' && typeof reply.message === 'string'
+    ? { id: reply.id.slice(0, 100), name: reply.name.slice(0, 40), message: reply.message.slice(0, 100) }
+    : undefined
+  return { id: data.id, name: typeof data.name === 'string' ? data.name.slice(0, 40) : `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: data.message.slice(0, 140), network, wallet, sentAt: data.sentAt, replyTo }
+}
+
+function keepNewest30(items: ChatMessage[]) {
+  const newestById = new Map(items.map(item => [item.id, item]))
+  return [...newestById.values()].sort((a, b) => a.sentAt - b.sentAt).slice(-30)
+}
+
+function cachedMessages() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CHAT_CACHE_KEY) ?? '[]') as unknown[]
+    return keepNewest30(stored.flatMap(item => {
+      if (!item || typeof item !== 'object') return []
+      const record = item as Partial<ChatMessage>
+      if ((record.network !== 'solana' && record.network !== 'megaeth') || typeof record.wallet !== 'string') return []
+      const message = normalizeChatMessage(record, record.network, record.wallet)
+      return message ? [message] : []
+    }))
+  } catch { return [] }
+}
 
 function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   if (!message.data || typeof message.data !== 'object' || typeof message.clientId !== 'string') return null
@@ -15,17 +43,11 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   const network = message.clientId.slice(0, separator)
   const wallet = message.clientId.slice(separator + 1)
   if ((network !== 'solana' && network !== 'megaeth') || !wallet) return null
-  const data = message.data as Partial<ChatMessage>
-  if (typeof data.id !== 'string' || typeof data.message !== 'string' || typeof data.sentAt !== 'number') return null
-  const reply = data.replyTo
-  const replyTo = reply && typeof reply.id === 'string' && typeof reply.name === 'string' && typeof reply.message === 'string'
-    ? { id: reply.id.slice(0, 100), name: reply.name.slice(0, 40), message: reply.message.slice(0, 100) }
-    : undefined
-  return { id: data.id, name: typeof data.name === 'string' ? data.name : `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: data.message.slice(0, 140), network, wallet, sentAt: data.sentAt, replyTo }
+  return normalizeChatMessage(message.data as Partial<ChatMessage>, network, wallet)
 }
 
 export default function ChatRail({ wallet, network, displayName, onViewProfile, onTipPlayer }: { wallet: string | null; network: Network; displayName: string; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
@@ -44,7 +66,9 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
   const clientRef = useRef<Ably.Realtime | null>(null)
   const lastSentAt = useRef(0)
   const requestedAvatars = useRef(new Set<string>())
+  const cacheHydrated = useRef(false)
   const canChat = Boolean(wallet && gamesPlayed >= 3)
+  const remainingCharacters = Math.max(0, 140 - draft.length)
 
   useEffect(() => {
     if (!wallet) { setGamesPlayed(0); return }
@@ -59,6 +83,12 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
   }, [network, wallet])
 
   useEffect(() => {
+    const saved = cachedMessages()
+    if (saved.length) setMessages(current => keepNewest30([...current, ...saved]))
+    cacheHydrated.current = true
+  }, [network, wallet])
+
+  useEffect(() => {
     let active = true
     const query = wallet ? `?network=${network}&wallet=${encodeURIComponent(wallet)}` : ''
     const client = new Ably.Realtime({ authUrl: `/api/chat-token${query}` })
@@ -69,7 +99,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
       if (!active || !ablyMessage.data || typeof ablyMessage.data !== 'object') return
       const item = authenticatedChatMessage(ablyMessage)
       if (!item) return
-      setMessages(current => current.some(existing => existing.id === item.id) ? current : [...current.slice(-29), item])
+      setMessages(current => keepNewest30([...current, item]))
     }
     const updateOnlineCount = async () => {
       try {
@@ -77,16 +107,29 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
         if (active) setOnlineCount(new Set(members.map(member => member.clientId)).size)
       } catch { /* Presence refreshes again on the next event. */ }
     }
+    const loadStoredHistory = async () => {
+      try {
+        const response = await fetch('/api/chat-history')
+        const body = response.ok ? await response.json() as { messages?: unknown[] } : null
+        if (!active || !body?.messages) return
+        const stored = body.messages.flatMap(item => {
+          if (!item || typeof item !== 'object') return []
+          const record = item as Partial<ChatMessage>
+          if ((record.network !== 'solana' && record.network !== 'megaeth') || typeof record.wallet !== 'string') return []
+          const normalized = normalizeChatMessage(record, record.network, record.wallet)
+          return normalized ? [normalized] : []
+        })
+        setMessages(current => keepNewest30([...current, ...stored]))
+      } catch { /* Ably history and the local cache remain available if Redis is not configured. */ }
+    }
+    void loadStoredHistory()
     void channel.subscribe('chat-message', receive).then(async () => {
       await channel.presence.subscribe(updateOnlineCount)
       await channel.presence.enter({ network })
       await updateOnlineCount()
       const history = await channel.history({ limit: 30, direction: 'backwards', untilAttach: true })
       const historical = history.items.map(authenticatedChatMessage).filter((item): item is ChatMessage => Boolean(item)).reverse()
-      if (active) setMessages(current => {
-        const newestById = new Map([...historical, ...current].map(item => [item.id, item]))
-        return [...newestById.values()].sort((a, b) => a.sentAt - b.sentAt).slice(-30)
-      })
+      if (active) setMessages(current => keepNewest30([...current, ...historical]))
       setError('')
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
     client.connection.on('failed', state => setError(state.reason?.message ?? 'Live chat connection failed.'))
@@ -106,6 +149,12 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
   }, [network, wallet])
 
   useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight }) }, [messages])
+  useEffect(() => {
+    if (!cacheHydrated.current) return
+    // Never overwrite a populated cache with an empty transient state during logout/reconnect.
+    if (!messages.length && cachedMessages().length) return
+    try { localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify(keepNewest30(messages))) } catch { /* Cache is optional. */ }
+  }, [messages])
 
   useEffect(() => {
     for (const item of messages) {
@@ -142,6 +191,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
         if (!channelRef.current) throw publishError
         await channelRef.current.publish('chat-message', record)
       }
+      void fetch('/api/chat-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record) }).catch(() => undefined)
       lastSentAt.current = Date.now(); setDraft(''); setReplyingTo(null)
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not send message.') }
     finally { setSending(false) }
@@ -164,7 +214,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
       </article>
     }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
     {error && <div className="chat-error">{error}</div>}
-    <form className="chat-compose" onSubmit={send}>{replyingTo && <div className="chat-reply-compose"><span>Replying to <strong>{replyingTo.name}</strong><small>{replyingTo.message}</small></span><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X /></button></div>}<textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={140} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? `${draft.length}/140` : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div><div className="chat-compose-tools"><button type="button" onClick={() => setShowRules(true)}><Info /> Chat Rules</button><button type="button" onClick={() => setShowRules(true)} aria-label="Open chat rules and character limit"><MessageCircle /> 140</button></div></form>
+    <form className="chat-compose" onSubmit={send}>{replyingTo && <div className="chat-reply-compose"><span>Replying to <strong>{replyingTo.name}</strong><small>{replyingTo.message}</small></span><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X /></button></div>}<textarea value={draft} onInput={event => setDraft(event.currentTarget.value.slice(0, 140))} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={140} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? '' : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div><div className="chat-compose-tools"><button type="button" onClick={() => setShowRules(true)}><Info /> Chat Rules</button><button type="button" onClick={() => setShowRules(true)} aria-label="Open chat rules and remaining characters"><MessageCircle /> <output aria-live="polite">{remainingCharacters}</output></button></div></form>
     {showRules && <div className="chat-rules-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowRules(false) }}><section className="chat-rules-modal" role="dialog" aria-modal="true" aria-labelledby="chat-rules-title"><button type="button" onClick={() => setShowRules(false)} aria-label="Close chat rules"><X /></button><Info /><h2 id="chat-rules-title">Chat Rules</h2><div className="chat-rules-placeholder" /></section></div>}
   </aside>
 }
