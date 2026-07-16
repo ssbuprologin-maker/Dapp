@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V20
+# TESTNET GAMES - Dino Run Build V23
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -15,9 +15,14 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - MegaETH wins are recorded locally and do not currently trigger an automatic payout.
 - A Solana memo is added to payout transactions to reduce reuse of an entry signature.
 - The worldwide leaderboard is stored in Upstash Redis, with browser-local scores as an automatic fallback.
+- Verified worldwide games award persistent wager progression and levels from 1 to 100. Level badges change color at levels 10, 25, 50, 75, and 100.
 - Worldwide rankings refresh every 15 seconds so scores from other players appear without a page reload.
 - Upstash Redis stores aggregate visits, time-on-site, wallet connections, SOL/ETH entries, games, wins, and losses.
 - PostHog is an optional visual analytics dashboard for the same anonymous browser events.
+
+Levels are based only on cumulative verified wagers measured in SOL-equivalent (`SOL-EQ`). SOL entries add their SOL amount directly. ETH entries use the remembered mainnet ETH-USD/SOL-USD ratio, so both currencies advance the same value-based curve. Redis keeps a high-water USD price for each asset, so credited progress never decreases. Approximate cumulative milestones are level 2 at 0.1 SOL-EQ, level 5 at 1.8 SOL-EQ, level 20 at 90 SOL-EQ, and level 30 at 450 SOL-EQ; levels above 30 require 6% more cumulative value per level until the level-100 cap.
+
+Global chat can be read by everyone, but the server grants Ably publish permission only after a wallet has completed three verified games.
 
 This is testnet-only. The browser reports who won, so a user can fake a winning result. Duplicate protection is also best-effort without a database. Never point this prototype at mainnet or a wallet containing real assets.
 
@@ -117,7 +122,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V20`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V23`.
 
 ## Local development
 

@@ -13,6 +13,18 @@ type LeaderboardRecord = { score: number; playedAt: number; won: boolean; transa
 
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
+const MICROSOL = 1_000_000
+function requiredSolForLevel(level: number) {
+  if (level <= 1) return 0
+  if (level > 30) return 450 * 1.06 ** (level - 30)
+  const n = level - 1
+  const x = n - 1
+  return 0.1 * n ** 2 * Math.exp(0.0342 * x + 0.000917 * x ** 2)
+}
+function levelFromWager(wagerSol: number) {
+  for (let level = 2; level <= 100; level += 1) if (wagerSol < requiredSolForLevel(level)) return level - 1
+  return 100
+}
 
 const COOLDOWN_MS = 10 * 60_000
 const MIN_SOL_LAMPORTS = Math.floor(0.1 * LAMPORTS_PER_SOL)
@@ -35,6 +47,10 @@ function normalizedWallet(network: Network, wallet: string) {
 
 export function profileKey(network: Network, wallet: string) {
   return `testnet-games:profile:${network}:${normalizedWallet(network, wallet)}`
+}
+
+function playerStatsKey(network: Network, wallet: string) {
+  return `testnet-games:player-stats:${network}:${normalizedWallet(network, wallet)}`
 }
 
 export function nameChangeMessage(network: Network, wallet: string, displayName: string, timestamp: number) {
@@ -101,11 +117,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const url = process.env.UPSTASH_REDIS_REST_URL!.trim()
       const token = process.env.UPSTASH_REDIS_REST_TOKEN!.trim()
       const rawRedis = new Redis({ url, token, automaticDeserialization: false })
-      const [historyRows, leaderboardRows] = await Promise.all([
+      const [historyRows, leaderboardRows, progression] = await Promise.all([
         rawRedis.zrange<string[]>(GAME_HISTORY_KEY, 0, 4_999, { rev: true }),
         // Include legacy games written before game history was separated from
         // personal-best leaderboard entries.
         rawRedis.zrange<string[]>(LEADERBOARD_KEY, 0, 499, { rev: true }),
+        redis.hgetall<Record<string, string | number>>(playerStatsKey(network, wallet)),
       ])
       const normalized = normalizedWallet(network, wallet)
       const gamesByTransaction = new Map<string, LeaderboardRecord>()
@@ -117,10 +134,19 @@ export default async function handler(request: VercelRequest, response: VercelRe
         } catch { /* Ignore malformed legacy rows. */ }
       })
       const games = [...gamesByTransaction.values()].sort((a, b) => b.playedAt - a.playedAt)
+      const wagerEquivalentSol = Number(progression?.wager_microsol ?? 0) / MICROSOL
+      const level = levelFromWager(wagerEquivalentSol)
+      const currentLevelWager = requiredSolForLevel(level)
+      const nextLevelWager = level >= 100 ? currentLevelWager : requiredSolForLevel(level + 1)
       return response.status(200).json({
         displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', discordConnected: Boolean(profile?.discordId),
         nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS,
-        stats: { gamesPlayed: games.length, solWagered: network === 'solana' ? games.length * 0.01 : 0, ethWagered: network === 'megaeth' ? games.length * 0.01 : 0 },
+        level, wagerEquivalentSol, wagerIntoLevelSol: level >= 100 ? 0 : wagerEquivalentSol - currentLevelWager,
+        wagerForNextLevelSol: level >= 100 ? 0 : nextLevelWager - currentLevelWager,
+        stats: {
+          gamesPlayed: games.length, wins: Number(progression?.wins ?? 0), losses: Number(progression?.losses ?? 0), bestScore: Number(progression?.best_score ?? 0),
+          solWagered: network === 'solana' ? games.length * 0.01 : 0, ethWagered: network === 'megaeth' ? games.length * 0.01 : 0,
+        },
         transactions: games.slice(0, 25).map(game => ({ hash: game.transaction, network: game.network, playedAt: game.playedAt, score: game.score, won: game.won })),
       })
     }

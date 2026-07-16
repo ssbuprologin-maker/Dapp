@@ -1,8 +1,16 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import Ably from 'ably'
 import { PublicKey } from '@solana/web3.js'
+import { Redis } from '@upstash/redis'
 
 const CHANNEL = 'testnet-games-global-chat'
+
+function redisClient() {
+  const url = process.env.UPSTASH_REDIS_REST_URL?.trim()
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim()
+  if (!url || !token) throw new Error('Player progression is not configured.')
+  return new Redis({ url, token })
+}
 
 function validIdentity(network: unknown, wallet: unknown) {
   if (network === 'solana' && typeof wallet === 'string') {
@@ -20,7 +28,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!key) return response.status(503).json({ message: 'Live chat is not configured. Add ABLY_API_KEY in Vercel.' })
     const wallet = validIdentity(request.query.network, request.query.wallet)
     const clientId = wallet ? `${request.query.network}:${wallet}` : `visitor-${crypto.randomUUID()}`
-    const operations = wallet ? ['subscribe', 'history', 'publish', 'presence'] : ['subscribe', 'history', 'presence']
+    const gamesPlayed = wallet
+      ? Number(await redisClient().hget(`testnet-games:player-stats:${request.query.network}:${wallet}`, 'games') ?? 0)
+      : 0
+    const operations = wallet && gamesPlayed >= 3
+      ? ['subscribe', 'history', 'publish', 'presence']
+      : ['subscribe', 'history', 'presence']
     const ably = new Ably.Rest(key)
     const tokenRequest = await ably.auth.createTokenRequest({ clientId, capability: JSON.stringify({ [CHANNEL]: operations }) })
     return response.status(200).json(tokenRequest)
