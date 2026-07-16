@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V38
+# TESTNET GAMES - Dino Run Build V40
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -31,6 +31,8 @@ Tall profile pictures have zoom and vertical-position controls before the croppe
 The connected header includes a clickable and scrollable SOL, MegaETH ETH, and Solana-devnet USDC balance selector. Its compact purple dropdown uses project-local 3D coin renders, shows every supported balance and conversion, keeps zero values numeric, and places the connected wallet's real logo beside the selected balance. Solana wallets use their Anza adapter icon, while MetaMask uses the official locally stored fox asset. SOL/ETH hover values use live USD spot prices, while USDC hover shows its SOL equivalent. A compact Rewards tab currently opens a placeholder page for the future rewards configuration.
 
 Access requires more than $8 of currently supported wallet value. Solana counts devnet SOL plus Circle devnet USDC; MegaETH counts testnet ETH. A signed worldwide username is required once per wallet before the dapp can be entered.
+
+The Access Granted/onboarding screen exists only for connected wallets that do not yet have a worldwide username. Returning named wallets show a short loading state while their profile is fetched and then open the game directly. Closing Profile, Rewards, or Affiliates also returns a named wallet to the game, so the onboarding screen cannot reappear after setup.
 
 This is testnet-only. The browser reports who won, so a user can fake a winning result. Duplicate protection is also best-effort without a database. Never point this prototype at mainnet or a wallet containing real assets.
 
@@ -145,7 +147,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V38`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V40`.
 
 ## Local development
 

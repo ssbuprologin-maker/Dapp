@@ -336,7 +336,7 @@ function App() {
     setMessage('Address copied.')
   }
 
-  const accessScreen = Boolean(connected && walletAddress && !showProfile && !showAffiliates && !showRewards && !inGame)
+  const accessScreen = Boolean(connected && walletAddress && profileLoaded && !displayName && !showProfile && !showAffiliates && !showRewards)
   useEffect(() => {
     if (accessScreen) window.scrollTo({ top: 0, left: 0 })
   }, [accessScreen, walletAddress])
@@ -349,14 +349,16 @@ function App() {
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} />
 
     <main>
-      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : showRewards && walletAddress ? (
+      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : !profileLoaded && walletAddress ? (
+        <section className="returning-player-loading"><LoaderCircle className="spin" /><span>LOADING PLAYER</span><p>Opening your game…</p></section>
+      ) : showRewards && walletAddress ? (
         <RewardsPage onBack={() => setShowRewards(false)} />
       ) : showAffiliates && walletAddress ? (
         <AffiliatesPage wallet={walletAddress} onBack={() => setShowAffiliates(false)} />
       ) : showProfile && walletAddress && viewedProfile ? (
         <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onBack={() => setShowProfile(false)} />
-      ) : inGame && walletAddress ? (
-        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onViewProfile={viewChatProfile} onExit={() => setInGame(false)} />
+      ) : displayName && walletAddress ? (
+        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} />
       ) : (
         <WalletView
           address={walletAddress!}
