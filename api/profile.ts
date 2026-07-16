@@ -169,14 +169,18 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{1,18}[A-Za-z0-9]$/.test(displayName)) throw new Error('Name must be 3–20 characters using letters, numbers, spaces, _ or -.')
     if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 5 * 60_000) throw new Error('Name-change request expired. Try again.')
     verifySignature(network, wallet, nameChangeMessage(network, wallet, displayName, timestamp), signature)
-    await verifyBalance(network, wallet)
     const current = await redis.get<Profile>(key)
+    // The first username is required for entry and only needs a valid wallet
+    // signature. Later username changes keep the balance and cooldown checks.
+    if (current?.displayName) await verifyBalance(network, wallet)
     const nextChangeAt = (current?.changedAt ?? 0) + COOLDOWN_MS
-    if (nextChangeAt > Date.now()) throw new Error(`Name can be changed again in ${Math.ceil((nextChangeAt - Date.now()) / 60_000)} minute(s).`)
+    if (current?.displayName && nextChangeAt > Date.now()) throw new Error(`Name can be changed again in ${Math.ceil((nextChangeAt - Date.now()) / 60_000)} minute(s).`)
     const cooldownKey = `${key}:name-change-cooldown`
-    const claimed = await redis.set(cooldownKey, '1', { nx: true, px: COOLDOWN_MS })
-    if (claimed !== 'OK') throw new Error('Name can only be changed once every 10 minutes.')
-    const profile: Profile = { displayName, changedAt: Date.now() }
+    if (current?.displayName) {
+      const claimed = await redis.set(cooldownKey, '1', { nx: true, px: COOLDOWN_MS })
+      if (claimed !== 'OK') throw new Error('Name can only be changed once every 10 minutes.')
+    }
+    const profile: Profile = { ...current, displayName, changedAt: Date.now() }
     await redis.set(key, profile)
     const label = `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
     await redis.set(`testnet-games:profile-label:${network}:${label}`, displayName)

@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V28
+# TESTNET GAMES - Dino Run Build V32
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -23,6 +23,10 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 Levels are based only on cumulative verified wagers measured in SOL-equivalent (`SOL-EQ`). SOL entries add their SOL amount directly. ETH entries use the remembered mainnet ETH-USD/SOL-USD ratio, so both currencies advance the same value-based curve. Redis keeps a high-water USD price for each asset, so credited progress never decreases. Approximate cumulative milestones are level 2 at 0.1 SOL-EQ, level 5 at 1.8 SOL-EQ, level 20 at 90 SOL-EQ, and level 30 at 450 SOL-EQ; levels above 30 require 6% more cumulative value per level until the level-100 cap.
 
 Global chat can be read by everyone, but the server grants Ably publish permission only after a wallet has completed three verified games.
+
+The connected header includes a scrollable SOL, MegaETH ETH, and Solana-devnet USDC balance selector. SOL/ETH hover values use live USD spot prices, while USDC hover shows its SOL equivalent.
+
+Access requires more than $8 of currently supported wallet value. Solana counts devnet SOL plus Circle devnet USDC; MegaETH counts testnet ETH. A signed worldwide username is required once per wallet before the dapp can be entered.
 
 This is testnet-only. The browser reports who won, so a user can fake a winning result. Duplicate protection is also best-effort without a database. Never point this prototype at mainnet or a wallet containing real assets.
 
@@ -122,7 +126,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V28`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V32`.
 
 ## Local development
 
