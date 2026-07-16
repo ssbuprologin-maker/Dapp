@@ -1,13 +1,25 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import Ably from 'ably'
-import { MessageCircle, Send } from 'lucide-react'
+import { BadgeCheck, MessageCircle, Send } from 'lucide-react'
 import { chatLevelTier } from './leveling'
+import type { TipTarget } from './TipModal'
 
 type Network = 'solana' | 'megaeth'
 type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number }
 const CHANNEL = 'testnet-games-global-chat'
 
-export default function ChatRail({ wallet, network, displayName, onViewProfile }: { wallet: string | null; network: Network; displayName: string; onViewProfile: (wallet: string, network: Network) => void }) {
+function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
+  if (!message.data || typeof message.data !== 'object' || typeof message.clientId !== 'string') return null
+  const separator = message.clientId.indexOf(':')
+  const network = message.clientId.slice(0, separator)
+  const wallet = message.clientId.slice(separator + 1)
+  if ((network !== 'solana' && network !== 'megaeth') || !wallet) return null
+  const data = message.data as Partial<ChatMessage>
+  if (typeof data.id !== 'string' || typeof data.message !== 'string' || typeof data.sentAt !== 'number') return null
+  return { id: data.id, name: typeof data.name === 'string' ? data.name : `${wallet.slice(0, 5)}...${wallet.slice(-4)}`, message: data.message.slice(0, 240), network, wallet, sentAt: data.sentAt }
+}
+
+export default function ChatRail({ wallet, network, displayName, onViewProfile, onTipPlayer }: { wallet: string | null; network: Network; displayName: string; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -15,6 +27,9 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
   const [ownAvatar, setOwnAvatar] = useState('')
   const [avatars, setAvatars] = useState<Record<string, string>>({})
   const [levels, setLevels] = useState<Record<string, number>>({})
+  const [verifiedProfiles, setVerifiedProfiles] = useState<Record<string, boolean>>({})
+  const [profileNames, setProfileNames] = useState<Record<string, string>>({})
+  const [selectedPlayer, setSelectedPlayer] = useState('')
   const [gamesPlayed, setGamesPlayed] = useState(0)
   const [onlineCount, setOnlineCount] = useState(0)
   const feed = useRef<HTMLDivElement>(null)
@@ -45,7 +60,8 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
     channelRef.current = channel
     const receive = (ablyMessage: Ably.Message) => {
       if (!active || !ablyMessage.data || typeof ablyMessage.data !== 'object') return
-      const item = ablyMessage.data as ChatMessage
+      const item = authenticatedChatMessage(ablyMessage)
+      if (!item) return
       setMessages(current => current.some(existing => existing.id === item.id) ? current : [...current.slice(-99), item])
     }
     const updateOnlineCount = async () => {
@@ -59,7 +75,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
       await channel.presence.enter({ network })
       await updateOnlineCount()
       const history = await channel.history({ limit: 100, direction: 'forwards' })
-      if (active) setMessages(history.items.map(item => item.data as ChatMessage).filter(item => item?.id))
+      if (active) setMessages(history.items.map(authenticatedChatMessage).filter((item): item is ChatMessage => Boolean(item)))
       setError('')
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
     client.connection.on('failed', state => setError(state.reason?.message ?? 'Live chat connection failed.'))
@@ -87,10 +103,12 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
       if (requestedAvatars.current.has(key)) continue
       requestedAvatars.current.add(key)
       void fetch(`/api/profile?network=${item.network}&wallet=${encodeURIComponent(item.wallet)}`)
-        .then(response => response.ok ? response.json() as Promise<{ avatarUrl?: string; level?: number }> : Promise.reject())
+        .then(response => response.ok ? response.json() as Promise<{ displayName?: string; avatarUrl?: string; level?: number; verified?: boolean }> : Promise.reject())
         .then(profile => {
           if (profile.avatarUrl) setAvatars(current => ({ ...current, [key]: profile.avatarUrl! }))
+          if (profile.displayName) setProfileNames(current => ({ ...current, [key]: profile.displayName! }))
           setLevels(current => ({ ...current, [key]: Number(profile.level ?? 1) }))
+          setVerifiedProfiles(current => ({ ...current, [key]: Boolean(profile.verified) }))
         })
         .catch(() => undefined)
     }
@@ -120,7 +138,7 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile }
 
   return <aside className="chat-rail">
     <div className="chat-title"><MessageCircle /><strong>GAME CHAT</strong><span className="online-count"><i />{onlineCount}</span></div>
-    <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => { const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network); const profileKey = item.wallet ? `${item.network}:${item.wallet}` : ''; const avatar = isOwn && ownAvatar ? ownAvatar : profileKey ? avatars[profileKey] : ''; const level = levels[profileKey] ?? 1; return <article key={item.id}><button className="chat-avatar" onClick={() => item.wallet && onViewProfile(item.wallet, item.network)} disabled={!item.wallet} title={item.wallet ? `View ${item.name}'s statistics` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{item.name.slice(0, 1).toUpperCase()}</span>}</button><div className="chat-message"><header><span><strong>{item.name}</strong><b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{item.message}</p></div><small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small></article> }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
+    <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => { const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network); const profileKey = item.wallet ? `${item.network}:${item.wallet}` : ''; const avatar = isOwn && ownAvatar ? ownAvatar : profileKey ? avatars[profileKey] : ''; const level = levels[profileKey] ?? 1; const verified = Boolean(verifiedProfiles[profileKey]); const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name); return <article key={item.id}><button className="chat-avatar" onClick={() => item.wallet && onViewProfile(item.wallet, item.network)} disabled={!item.wallet} title={item.wallet ? `View ${name}'s statistics` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button><div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={() => setSelectedPlayer(current => current === item.id ? '' : item.id)}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{item.message}</p></div><small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>{selectedPlayer === item.id && item.wallet && <div className="chat-user-menu"><button type="button" onClick={() => { setSelectedPlayer(''); onViewProfile(item.wallet!, item.network) }}>View profile</button><button type="button" disabled={isOwn} onClick={() => { setSelectedPlayer(''); onTipPlayer({ wallet: item.wallet!, network: item.network, name, avatar, level, verified }) }}>{isOwn ? 'Your wallet' : 'Tip player'}</button></div>}</article> }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
     {error && <div className="chat-error">{error}</div>}
     <form className="chat-compose" onSubmit={send}><textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={240} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? `${draft.length}/240` : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div></form>
   </aside>

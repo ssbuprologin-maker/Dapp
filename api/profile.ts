@@ -13,6 +13,7 @@ type LeaderboardRecord = { score: number; playedAt: number; won: boolean; transa
 
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
+const VERIFIED_WALLETS_KEY = 'testnet-games:verified-wallets:v1'
 const MICROSOL = 1_000_000
 function requiredSolForLevel(level: number) {
   if (level <= 1) return 0
@@ -117,14 +118,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const url = process.env.UPSTASH_REDIS_REST_URL!.trim()
       const token = process.env.UPSTASH_REDIS_REST_TOKEN!.trim()
       const rawRedis = new Redis({ url, token, automaticDeserialization: false })
-      const [historyRows, leaderboardRows, progression] = await Promise.all([
+      const normalized = normalizedWallet(network, wallet)
+      const [historyRows, leaderboardRows, progression, verified] = await Promise.all([
         rawRedis.zrange<string[]>(GAME_HISTORY_KEY, 0, 4_999, { rev: true }),
         // Include legacy games written before game history was separated from
         // personal-best leaderboard entries.
         rawRedis.zrange<string[]>(LEADERBOARD_KEY, 0, 499, { rev: true }),
         redis.hgetall<Record<string, string | number>>(playerStatsKey(network, wallet)),
+        redis.sismember(VERIFIED_WALLETS_KEY, `${network}:${normalized}`),
       ])
-      const normalized = normalizedWallet(network, wallet)
       const gamesByTransaction = new Map<string, LeaderboardRecord>()
       ;[...historyRows, ...leaderboardRows].forEach(row => {
         try {
@@ -140,7 +142,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const currentLevelWager = requiredSolForLevel(level)
       const nextLevelWager = level >= 100 ? currentLevelWager : requiredSolForLevel(level + 1)
       return response.status(200).json({
-        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', discordConnected: Boolean(profile?.discordId),
+        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', verified: Boolean(verified), discordConnected: Boolean(profile?.discordId),
         nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS,
         level, wagerEquivalentSol, wagerIntoLevelSol: level >= 100 ? 0 : wagerEquivalentSol - currentLevelWager,
         wagerForNextLevelSol: level >= 100 ? 0 : nextLevelWager - currentLevelWager,

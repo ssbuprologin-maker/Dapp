@@ -4,6 +4,7 @@ import { Connection, PublicKey } from '@solana/web3.js'
 import solCoin from './assets/sol-coin-3d-v1.png'
 import ethCoin from './assets/eth-coin-3d-v1.png'
 import usdcCoin from './assets/usdc-coin-3d-v1.png'
+import metaMaskFox from './assets/metamask-fox-official.svg'
 
 const DEVNET_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
 type Coin = 'SOL' | 'ETH' | 'USDC'
@@ -16,19 +17,21 @@ function CoinIcon({ coin }: { coin: Coin | 'USD' }) {
   return <i className={`header-coin-icon coin-${coin.toLowerCase()}`}><img src={source} alt="" /></i>
 }
 
-function WalletMark({ icon, kind }: { icon?: string; kind: 'metamask' | 'site' | 'external' }) {
-  return <span className={`header-wallet-mark wallet-${kind}`} title={kind === 'metamask' ? 'MetaMask' : kind === 'site' ? 'Site wallet' : 'Connected wallet'}>
-    {icon ? <img src={icon} alt="" /> : <b>{kind === 'metamask' ? '🦊' : kind === 'site' ? 'S' : 'W'}</b>}
+function WalletMark({ icon, kind, name }: { icon?: string; kind: 'metamask' | 'site' | 'external'; name: string }) {
+  const source = kind === 'metamask' ? metaMaskFox : icon
+  return <span className={`header-wallet-mark wallet-${kind}`} title={name}>
+    {source ? <img src={source} alt={`${name} logo`} /> : <b>{kind === 'site' ? 'S' : 'W'}</b>}
   </span>
 }
 
-export default function HeaderBalance({ balance, network, solanaWallet, connection, walletIcon, walletKind }: {
+export default function HeaderBalance({ balance, network, solanaWallet, connection, walletIcon, walletKind, walletName }: {
   balance: number | null
   network: 'solana' | 'megaeth'
   solanaWallet: PublicKey | null
   connection: Connection
   walletIcon?: string
   walletKind: 'metamask' | 'site' | 'external'
+  walletName: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<Coin>(network === 'solana' ? 'SOL' : 'ETH')
@@ -93,7 +96,7 @@ export default function HeaderBalance({ balance, network, solanaWallet, connecti
         ? <><CoinIcon coin={selected === 'USDC' ? 'SOL' : 'USD'} /><strong>{conversion}</strong></>
         : <><CoinIcon coin={selected} /><strong>{formatAmount(selected)}</strong></>}
       <ChevronDown />
-      <WalletMark icon={walletIcon} kind={walletKind} />
+      <WalletMark icon={walletIcon} kind={walletKind} name={walletName} />
     </button>
     {open && <div className="header-balance-menu" role="menu">
       <strong>Select wallet:</strong>

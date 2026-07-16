@@ -69,10 +69,16 @@ export async function getMegaEthBalance(address: string) {
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
 
 export async function sendMegaEthEntry(from: string) {
+  return sendMegaEthTransfer(from, MEGAETH_RECEIVER, MEGAETH_ENTRY_WEI)
+}
+
+export async function sendMegaEthTransfer(from: string, to: string, valueWei: bigint) {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(to)) throw new Error('The recipient returned an invalid MegaETH address.')
+  if (valueWei <= 0n) throw new Error('Tip amount must be greater than zero.')
   const provider = await ensureMegaEthTestnet()
   const transactionHash = await provider.request<string>({
     method: 'eth_sendTransaction',
-    params: [{ from, to: MEGAETH_RECEIVER, value: `0x${MEGAETH_ENTRY_WEI.toString(16)}` }],
+    params: [{ from, to, value: `0x${valueWei.toString(16)}` }],
   })
   const deadline = Date.now() + 45_000
   while (Date.now() < deadline) {
@@ -80,11 +86,10 @@ export async function sendMegaEthEntry(from: string) {
       method: 'eth_getTransactionReceipt', params: [transactionHash],
     })
     if (receipt) {
-      if (receipt.status === '0x0') throw new Error('The MegaETH entry transaction failed.')
+      if (receipt.status === '0x0') throw new Error('The MegaETH transaction failed.')
       return transactionHash
     }
     await wait(700)
   }
   throw new Error('MegaETH confirmation timed out. Check MetaMask before trying again.')
 }
-

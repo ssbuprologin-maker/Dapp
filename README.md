@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V35
+# TESTNET GAMES - Dino Run Build V38
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -24,7 +24,11 @@ Levels are based only on cumulative verified wagers measured in SOL-equivalent (
 
 Global chat can be read by everyone, but the server grants Ably publish permission only after a wallet has completed three verified games.
 
-The connected header includes a clickable and scrollable SOL, MegaETH ETH, and Solana-devnet USDC balance selector. Its compact purple dropdown uses project-local 3D coin renders, shows every supported balance and conversion, keeps zero values numeric, and places the connected wallet logo beside the selected balance. SOL/ETH hover values use live USD spot prices, while USDC hover shows its SOL equivalent.
+Clicking an authenticated chat username opens actions for viewing that wallet's profile or tipping it. Tips are non-custodial, same-network native transfers: devnet SOL to Solana players or MegaETH testnet ETH to MegaETH players. The sender confirms the exact recipient and amount in Phantom, Solflare, MetaMask, or the browser-local site wallet. Tips are irreversible, have no house fee, and are not stored by the server. The recipient address comes from Ably's signed-in `clientId`, not client-supplied message data, to prevent a message from substituting another tipping address.
+
+Tall profile pictures have zoom and vertical-position controls before the cropped avatar is saved. Clicking the DINOGAME logo takes a connected player directly to the game screen. Chat messages use larger avatars, names, text, and message cards on desktop.
+
+The connected header includes a clickable and scrollable SOL, MegaETH ETH, and Solana-devnet USDC balance selector. Its compact purple dropdown uses project-local 3D coin renders, shows every supported balance and conversion, keeps zero values numeric, and places the connected wallet's real logo beside the selected balance. Solana wallets use their Anza adapter icon, while MetaMask uses the official locally stored fox asset. SOL/ETH hover values use live USD spot prices, while USDC hover shows its SOL equivalent. A compact Rewards tab currently opens a placeholder page for the future rewards configuration.
 
 Access requires more than $8 of currently supported wallet value. Solana counts devnet SOL plus Circle devnet USDC; MegaETH counts testnet ETH. A signed worldwide username is required once per wallet before the dapp can be entered.
 
@@ -98,6 +102,21 @@ player_wins
 player_losses
 ```
 
+### Assigning a verified badge
+
+Verified badges are attached to wallets, not editable usernames. In the Upstash database, open **CLI** and add the normalized wallet to this Redis set:
+
+```text
+SADD testnet-games:verified-wallets:v1 "megaeth:0xlowercase_wallet_address"
+SADD testnet-games:verified-wallets:v1 "solana:Base58WalletAddress"
+```
+
+For MegaETH, the address after `megaeth:` must be lowercase. Solana addresses keep their original Base58 capitalization. Reload the site after running the command; the blue verified badge appears beside that wallet's current chat name and profile name. To remove it:
+
+```text
+SREM testnet-games:verified-wallets:v1 "megaeth:0xlowercase_wallet_address"
+```
+
 Average time on site is `session_seconds_total / sessions_measured`. The `unique-visitors` HyperLogLog stores only anonymous browser IDs; wallet addresses and transaction hashes are not stored in analytics. They are used separately by the payment-verified leaderboard.
 
 The API stores the top 500 scores in the `testnet-games:leaderboard:v1` sorted set and returns the top 50. Before accepting a score, it verifies that its entry transaction paid the correct 0.01 testnet amount to the configured receiver. Each transaction can create only one worldwide row. Gameplay still runs in the browser, so this is payment-verified rather than cheat-proof.
@@ -126,7 +145,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V35`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V38`.
 
 ## Local development
 
