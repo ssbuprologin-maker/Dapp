@@ -198,7 +198,7 @@ body>.shell,body>#root>.shell{padding-top:76px}.shell>header{position:fixed;inse
 /* Adjustable avatar framing, roomier chat bubbles, and wallet-backed verification. */
 .crop-preview img{transition:transform .08s,object-position .08s}
 .verified-badge{flex:none;width:13px;height:13px;color:#fff;fill:#1689ff;stroke-width:2.5;filter:drop-shadow(0 0 5px #1689ff70)}
-.profile-heading h1{display:flex;align-items:center;gap:8px}.profile-heading h1 .verified-badge{width:22px;height:22px;transform:translateY(3px)}
+.profile-heading h1{display:flex;align-items:center;gap:10px}.profile-heading h1 .verified-badge{width:28px;height:28px;transform:translateY(1px);filter:drop-shadow(0 0 6px #1689ff85)}
 @media(min-width:901px){.chat-feed article{min-height:78px;grid-template-columns:41px minmax(0,1fr);column-gap:10px;margin:6px 0;padding:12px 10px;border-radius:9px}.chat-avatar{width:41px;height:41px;border-radius:10px;font-size:12px}.chat-message header{min-height:24px}.chat-message header>span{gap:7px}.chat-message header strong{font-size:14px}.chat-message header .verified-badge{width:14px;height:14px}.chat-message header .chat-level{width:31px;height:22px;font-size:9px}.chat-message time{padding:4px 7px;font-size:9px}.chat-message p{margin-top:6px;font-size:12px;line-height:1.4}}
 
 /* Authenticated chat-player actions and non-custodial tipping confirmation. */
