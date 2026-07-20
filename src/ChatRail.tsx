@@ -50,7 +50,7 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   return normalizeChatMessage(message.data as Partial<ChatMessage>, network, wallet)
 }
 
-export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate, collapsed, onToggleCollapsed }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void>; collapsed: boolean; onToggleCollapsed: () => void }) {
+export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate, onError, collapsed, onToggleCollapsed }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void>; onError: (message: string) => void; collapsed: boolean; onToggleCollapsed: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -81,6 +81,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const ownMessageIds = useRef(new Set<string>())
   const canChat = Boolean(wallet && gamesPlayed >= 3)
   const remainingCharacters = Math.max(0, 140 - draft.length)
+  const reportError = (detail: string) => { setError(detail); onError(detail) }
 
   useEffect(() => {
     try { setMutedPlayers(JSON.parse(localStorage.getItem(mutedCacheKey(network, wallet)) ?? '[]') as string[]) } catch { setMutedPlayers([]) }
@@ -153,8 +154,8 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const historical = history.items.map(authenticatedChatMessage).filter((item): item is ChatMessage => Boolean(item)).reverse()
       if (active) setMessages(current => keepNewest30([...current, ...historical]))
       setError('')
-    }).catch(reason => setError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
-    client.connection.on('failed', state => setError(state.reason?.message ?? 'Live chat connection failed.'))
+    }).catch(reason => reportError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
+    client.connection.on('failed', state => reportError(state.reason?.message ?? 'Live chat connection failed.'))
     return () => { active = false; channelRef.current = null; if (clientRef.current === client) clientRef.current = null; void channel.presence.leave(); client.close() }
   }, [canChat, network, onReplyNotification, wallet])
 
@@ -205,7 +206,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     event.preventDefault()
     const message = draft.trim()
     if (!wallet || !canChat || !channelRef.current || !message || sending) return
-    if (Date.now() - lastSentAt.current < 3_000) { setError('Slow down—wait a few seconds before chatting again.'); return }
+    if (Date.now() - lastSentAt.current < 3_000) { reportError('Slow down—wait a few seconds before chatting again.'); return }
     setSending(true); setError('')
     try {
       const normalizedWallet = network === 'megaeth' ? wallet.toLowerCase() : wallet
@@ -220,7 +221,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       }
       void fetch('/api/chat-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record) }).catch(() => undefined)
       lastSentAt.current = Date.now(); setDraft(''); setReplyingTo(null)
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not send message.') }
+    } catch (reason) { reportError(reason instanceof Error ? reason.message : 'Could not send message.') }
     finally { setSending(false) }
   }
   const openModeration = (target: ModerationTarget) => { setModerationTarget(target); setModerationNote(''); setTimeoutMinutes(10); setModerationError(''); setSelectedPlayer('') }
