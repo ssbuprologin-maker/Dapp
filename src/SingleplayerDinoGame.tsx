@@ -355,7 +355,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const leaderboard = leaderboardMode === 'worldwide' ? worldwideScores : localScores
 
   return <section className="game-page">
-    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V51</span><h1>Dino Run</h1></div><button onClick={onExit}>View profile</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V52</span><h1>Dino Run</h1></div><button onClick={onExit}>View profile</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
