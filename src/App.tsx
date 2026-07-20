@@ -20,7 +20,7 @@ import {
   connectMetaMask, getMegaEthBalance, getMetaMaskProvider, MEGAETH_FAUCET_URL,
 } from './megaEth'
 import { trackAnalytics } from './analytics'
-import ChatRail, { type ReplyNotification } from './ChatRail'
+import ChatRail, { type ModerationTarget, type ReplyNotification } from './ChatRail'
 import ProfilePage from './ProfilePage'
 import AffiliatesPage from './AffiliatesPage'
 import HeaderBalance from './HeaderBalance'
@@ -70,6 +70,7 @@ function App() {
   const [headerAvatar, setHeaderAvatar] = useState('')
   const [viewedProfile, setViewedProfile] = useState<{ wallet: string; network: 'solana' | 'megaeth' } | null>(null)
   const [tipTarget, setTipTarget] = useState<TipTarget | null>(null)
+  const [isModerator, setIsModerator] = useState(false)
   const [notifications, setNotifications] = useState<ReplyNotification[]>(() => {
     try { return JSON.parse(localStorage.getItem(NOTIFICATIONS_CACHE_KEY) ?? '[]') as ReplyNotification[] } catch { return [] }
   })
@@ -178,17 +179,18 @@ function App() {
     window.setTimeout(() => void refreshBalance(), 3_000)
   }, [refreshBalance])
   useEffect(() => {
-    if (!walletAddress) { setProfileLoaded(false); return }
+    if (!walletAddress) { setProfileLoaded(false); setIsModerator(false); return }
     let active = true
     const network = isMegaEth ? 'megaeth' : 'solana'
     setDisplayName('')
     setNextNameChangeAt(0)
     setProfileLoaded(false)
     fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
-      .then(async response => response.ok ? response.json() as Promise<{ displayName?: string; nextChangeAt?: number; avatarUrl?: string }> : Promise.reject())
+      .then(async response => response.ok ? response.json() as Promise<{ displayName?: string; nextChangeAt?: number; avatarUrl?: string; moderator?: boolean }> : Promise.reject())
       .then(profile => {
         if (!active) return
         setDisplayName(profile.displayName ?? ''); setNextNameChangeAt(profile.nextChangeAt ?? 0)
+        setIsModerator(Boolean(profile.moderator))
         setProfileLoaded(true)
         if (profile.avatarUrl) {
           setHeaderAvatar(profile.avatarUrl)
@@ -196,7 +198,7 @@ function App() {
           window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet: walletAddress, network: isMegaEth ? 'megaeth' : 'solana', avatar: profile.avatarUrl } }))
         }
       })
-      .catch(() => { if (active) { setDisplayName(''); setNextNameChangeAt(0); setProfileLoaded(true) } })
+      .catch(() => { if (active) { setDisplayName(''); setNextNameChangeAt(0); setIsModerator(false); setProfileLoaded(true) } })
     return () => { active = false }
   }, [isMegaEth, walletAddress])
 
@@ -314,6 +316,7 @@ function App() {
       setEvmAddress(accounts[0] ?? null)
       setBalance(null)
       setDisplayName('')
+      setIsModerator(false)
       setProfileLoaded(false)
       setUsdcBalance(0)
       setHeaderAvatar('')
@@ -343,6 +346,7 @@ function App() {
     setViewedProfile(null)
     setTipTarget(null)
     setDisplayName('')
+    setIsModerator(false)
     setProfileLoaded(false)
     setNextNameChangeAt(0)
     setHeaderAvatar('')
@@ -364,6 +368,30 @@ function App() {
       setModal(true)
     }
   }
+  const moderatePlayer = async (target: ModerationTarget, note: string, durationMinutes: number) => {
+    if (!walletAddress) throw new Error('Connect a moderator wallet first.')
+    const moderatorNetwork = isMegaEth ? 'megaeth' : 'solana'
+    const moderator = isMegaEth ? walletAddress.toLowerCase() : walletAddress
+    const targetWallet = target.network === 'megaeth' ? target.wallet.toLowerCase() : target.wallet
+    const cleanNote = note.trim().replace(/\s+/g, ' ')
+    const duration = target.action === 'timeout' ? durationMinutes : 0
+    const timestamp = Date.now()
+    const moderationMessage = `Testnet Games moderation\nAction: ${target.action}\nModerator: ${moderatorNetwork}:${moderator}\nTarget: ${target.network}:${targetWallet}\nDuration minutes: ${duration}\nNote: ${cleanNote}\nTimestamp: ${timestamp}`
+    let signature: string
+    if (isMegaEth) {
+      const provider = getMetaMaskProvider()
+      if (!provider) throw new Error('MetaMask is unavailable.')
+      signature = await provider.request<string>({ method: 'personal_sign', params: [moderationMessage, walletAddress] })
+    } else if (localWallet) signature = bs58.encode(ed25519.sign(new TextEncoder().encode(moderationMessage), localWallet.secretKey.slice(0, 32)))
+    else {
+      if (!external.signMessage) throw new Error('This wallet does not support message signing.')
+      signature = bs58.encode(await external.signMessage(new TextEncoder().encode(moderationMessage)))
+    }
+    const response = await fetch('/api/moderation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: target.action, moderatorNetwork, moderator, targetNetwork: target.network, target: targetWallet, durationMinutes: duration, note: cleanNote, timestamp, signature }) })
+    const body = await response.json() as { message?: string }
+    if (!response.ok) throw new Error(body.message ?? 'Moderation action failed.')
+    setMessage(target.action === 'timeout' ? `${target.name} timed out for ${duration} minute${duration === 1 ? '' : 's'}.` : `Warning sent to ${target.name}.`)
+  }
 
   const copyAddress = async () => {
     if (!walletAddress) return
@@ -381,7 +409,7 @@ function App() {
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setShowRewards(false); setInGame(connected); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
       {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><button type="button" className={`header-rewards ${showRewards ? 'active' : ''}`} onClick={openRewards}><Gift /><span><strong>$0.00</strong><small>Rewards</small></span></button><div className="header-notifications"><button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>{notificationsOpen && <div className="header-notification-menu"><header><strong>Notifications</strong>{unreadNotifications > 0 && <button type="button" onClick={() => setNotifications(current => current.map(notification => ({ ...notification, read: true })))}>Mark read</button>}</header>{notifications.length ? <div>{notifications.map(notification => <button type="button" key={notification.id} className={notification.read ? '' : 'unread'} onClick={() => { setNotifications(current => current.map(item => item.id === notification.id ? { ...item, read: true } : item)); setNotificationsOpen(false); viewChatProfile(notification.wallet, notification.network) }}><Bell /><span><strong>{notification.senderName} replied to your message</strong><small>{notification.message}</small></span></button>)}</div> : <p>No notifications</p>}</div>}</div><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
-    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} />
+    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} />
 
     <main>
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : !profileLoaded && walletAddress ? (

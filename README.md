@@ -1,4 +1,4 @@
-# TESTNET GAMES - Dino Run Build V50
+# TESTNET GAMES - Dino Run Build V51
 
 A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solflare, browser-local Solana wallets, and MetaMask.
 
@@ -24,6 +24,8 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - The game listens for Space/ArrowUp to jump, but its global keyboard handler must ignore focused inputs, textareas, selects, and content-editable elements. Otherwise it blocks spaces while chat is focused.
 - Clicking a chat message opens Reply, View profile, and Tip player. Clicking an avatar opens that profile immediately. Reply data is a short sanitized quote.
 - Header notifications are browser-local for now. A live reply to one of the current wallet's messages creates an unread reply notification. Clicking it marks it read and opens the sender's profile. Keep this notification list extensible for future types.
+- Moderator tags are backed by Redis role membership. Moderators can sign warnings and 1-minute to 7-day chat timeouts from a chat message's action menu. A timeout removes Ably publish permission at the next short-lived token renewal; it does not prevent reading chat.
+- Tag policy is enforced by `/api/profile`: a player may have one role tag, or Verified plus one role tag. Verified is the only tag that can be paired with another tag; profile/chat consumers use the server-approved tag list.
 - Chat rules controls intentionally open an empty placeholder modal. Do not invent rules/content until asked.
 
 ### Critical source map
@@ -33,8 +35,9 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | `src/App.tsx` | Application state, wallet connection, balance refresh, routing between onboarding/game/profile, header and tips. |
 | `src/SingleplayerDinoGame.tsx` | Game loop, entry payment, bot, scores, payout request, leaderboard display. |
 | `src/ChatRail.tsx` | Ably realtime client, Redis/browser history loading, chat UI, reply/action menu, 140-character enforcement. |
-| `api/chat-token.ts` | Creates restricted Ably tokens. Publish access is granted only after three verified games. |
+| `api/chat-token.ts` | Creates restricted Ably tokens. Publish access is granted only after three verified games and is withheld while a chat timeout is active. |
 | `api/chat-history.ts` | Redis-backed newest-30 global chat history. Keep this as TypeScript only. |
+| `api/moderation.ts` | Verifies signed moderator warnings and timeouts, then writes their Redis audit/timeout records. |
 | `src/ProfilePage.tsx` / `api/profile.ts` | Worldwide profiles, unique usernames, avatars, levels, verified badge, settings. |
 | `src/TipModal.tsx` | Same-network non-custodial SOL/ETH tips. |
 | `src/HeaderBalance.tsx` | Compact selectable SOL/ETH/USDC header balance and conversion display. |
@@ -68,11 +71,12 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | `/api/leaderboard` | GET/POST | Worldwide scores and verified paid-entry recording. |
 | `/api/chat-token` | GET | Ably token for realtime chat. |
 | `/api/chat-history` | GET/POST | Durable newest 30 chat records. Requires Upstash. |
+| `/api/moderation` | POST | Signed moderator warning or chat-timeout action. |
 | `/api/payout` | POST | Solana devnet payout after a verified winning entry. |
 | `/api/prices` | GET | SOL/ETH/USDC price data. |
 | `/api/analytics` | POST | Anonymous application analytics. |
 
-Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:player-stats:<network>:<wallet>`, and `testnet-games:chat-history:v1`.
+Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:player-stats:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:moderation-history:<network>:<wallet>`, and `testnet-games:chat-timeout:<network>:<wallet>`.
 
 ### Deployment and verification
 
@@ -218,6 +222,19 @@ For MegaETH, the address after `megaeth:` must be lowercase. Solana addresses ke
 SREM testnet-games:verified-wallets:v1 "megaeth:0xlowercase_wallet_address"
 ```
 
+### Assigning a moderator role
+
+Moderator roles attach to wallets, just like verification. Add a wallet in the Upstash CLI:
+
+```text
+SADD testnet-games:moderators:v1 "megaeth:0xlowercase_wallet_address"
+SADD testnet-games:moderators:v1 "solana:Base58WalletAddress"
+```
+
+Reload after adding the role. The player receives a purple `MOD` tag in chat and on the profile heading. Clicking any other user's chat message then exposes **Warn user** and **Timeout** actions. Every action requires the moderator wallet to sign an exact request; the server rejects users that are not in this Redis set.
+
+Warnings require a reason and are kept in `testnet-games:moderation-history:<network>:<wallet>` (newest 50). Timeouts require a reason and duration of 1 minute through 7 days, write the same audit record, and set an expiring key at `testnet-games:chat-timeout:<network>:<wallet>`. Do not manually delete an active timeout key unless you intend to end it early.
+
 Average time on site is `session_seconds_total / sessions_measured`. The `unique-visitors` HyperLogLog stores only anonymous browser IDs; wallet addresses and transaction hashes are not stored in analytics. They are used separately by the payment-verified leaderboard.
 
 The API stores the top 500 scores in the `testnet-games:leaderboard:v1` sorted set and returns the top 50. Before accepting a score, it verifies that its entry transaction paid the correct 0.01 testnet amount to the configured receiver. Each transaction can create only one worldwide row. Gameplay still runs in the browser, so this is payment-verified rather than cheat-proof.
@@ -249,7 +266,7 @@ If you later obtain a private endpoint, both RPC variables remain optional overr
 
 The receiver needs more than `0.02 devnet SOL` available to cover a winning payout and the network fee. Because each player entry adds 0.01, pre-fund the receiver with enough extra devnet SOL to cover the matching 0.01 for expected wins.
 
-After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V50`.
+After adding or changing variables, redeploy the newest Production commit. Confirm the game header displays `DUAL TESTNET BOT RACE - BUILD V51`.
 
 ## Local development
 

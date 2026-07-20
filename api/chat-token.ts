@@ -6,6 +6,7 @@ import { Redis } from '@upstash/redis'
 const CHANNEL = 'testnet-games-global-chat'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
+const TIMEOUT_PREFIX = 'testnet-games:chat-timeout:'
 
 function redisClient() {
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim()
@@ -57,12 +58,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!key) return response.status(503).json({ message: 'Live chat is not configured. Add ABLY_API_KEY in Vercel.' })
     const wallet = validIdentity(request.query.network, request.query.wallet)
     const clientId = wallet ? `${request.query.network}:${wallet}` : `visitor-${crypto.randomUUID()}`
-    const gamesPlayed = wallet ? await verifiedGameCount(String(request.query.network), wallet) : 0
-    const operations = wallet && gamesPlayed >= 3
+    const network = request.query.network === 'solana' || request.query.network === 'megaeth' ? request.query.network : ''
+    const gamesPlayed = wallet ? await verifiedGameCount(network, wallet) : 0
+    const timedOut = wallet && network ? Boolean(await redisClient().get(`${TIMEOUT_PREFIX}${network}:${wallet}`)) : false
+    const operations = wallet && gamesPlayed >= 3 && !timedOut
       ? ['subscribe', 'history', 'publish', 'presence']
       : ['subscribe', 'history', 'presence']
     const ably = new Ably.Rest(key)
-    const tokenRequest = await ably.auth.createTokenRequest({ clientId, capability: JSON.stringify({ [CHANNEL]: operations }) })
+    const tokenRequest = await ably.auth.createTokenRequest({ clientId, capability: JSON.stringify({ [CHANNEL]: operations }), ttl: 60_000 })
     return response.status(200).json(tokenRequest)
   } catch (error) {
     return response.status(400).json({ message: error instanceof Error ? error.message : 'Could not authorize live chat.' })

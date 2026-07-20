@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import Ably from 'ably'
-import { BadgeCheck, Info, MessageCircle, Reply, Send, X } from 'lucide-react'
+import { BadgeCheck, Info, MessageCircle, Reply, Send, ShieldAlert, X } from 'lucide-react'
 import { chatLevelTier } from './leveling'
 import type { TipTarget } from './TipModal'
 
@@ -8,6 +8,8 @@ type Network = 'solana' | 'megaeth'
 type ReplyPreview = { id: string; name: string; message: string }
 type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number; replyTo?: ReplyPreview }
 export type ReplyNotification = { id: string; senderName: string; message: string; wallet: string; network: Network; receivedAt: number; read: boolean }
+type ModerationAction = 'warn' | 'timeout'
+export type ModerationTarget = { wallet: string; network: Network; name: string; action: ModerationAction }
 const CHANNEL = 'testnet-games-global-chat'
 const CHAT_CACHE_KEY = 'testnet-games:chat-cache:v1'
 
@@ -47,7 +49,7 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   return normalizeChatMessage(message.data as Partial<ChatMessage>, network, wallet)
 }
 
-export default function ChatRail({ wallet, network, displayName, onViewProfile, onTipPlayer, onReplyNotification }: { wallet: string | null; network: Network; displayName: string; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void }) {
+export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void> }) {
   const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -56,10 +58,16 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
   const [avatars, setAvatars] = useState<Record<string, string>>({})
   const [levels, setLevels] = useState<Record<string, number>>({})
   const [verifiedProfiles, setVerifiedProfiles] = useState<Record<string, boolean>>({})
+  const [moderatorProfiles, setModeratorProfiles] = useState<Record<string, boolean>>({})
   const [profileNames, setProfileNames] = useState<Record<string, string>>({})
   const [selectedPlayer, setSelectedPlayer] = useState('')
   const [replyingTo, setReplyingTo] = useState<ReplyPreview | null>(null)
   const [showRules, setShowRules] = useState(false)
+  const [moderationTarget, setModerationTarget] = useState<ModerationTarget | null>(null)
+  const [moderationNote, setModerationNote] = useState('')
+  const [timeoutMinutes, setTimeoutMinutes] = useState(10)
+  const [moderating, setModerating] = useState(false)
+  const [moderationError, setModerationError] = useState('')
   const [gamesPlayed, setGamesPlayed] = useState(0)
   const [onlineCount, setOnlineCount] = useState(0)
   const feed = useRef<HTMLDivElement>(null)
@@ -173,12 +181,13 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
       if (requestedAvatars.current.has(key)) continue
       requestedAvatars.current.add(key)
       void fetch(`/api/profile?network=${item.network}&wallet=${encodeURIComponent(item.wallet)}`)
-        .then(response => response.ok ? response.json() as Promise<{ displayName?: string; avatarUrl?: string; level?: number; verified?: boolean }> : Promise.reject())
+        .then(response => response.ok ? response.json() as Promise<{ displayName?: string; avatarUrl?: string; level?: number; verified?: boolean; moderator?: boolean }> : Promise.reject())
         .then(profile => {
           if (profile.avatarUrl) setAvatars(current => ({ ...current, [key]: profile.avatarUrl! }))
           if (profile.displayName) setProfileNames(current => ({ ...current, [key]: profile.displayName! }))
           setLevels(current => ({ ...current, [key]: Number(profile.level ?? 1) }))
           setVerifiedProfiles(current => ({ ...current, [key]: Boolean(profile.verified) }))
+          setModeratorProfiles(current => ({ ...current, [key]: Boolean(profile.moderator) }))
         })
         .catch(() => undefined)
     }
@@ -206,6 +215,15 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not send message.') }
     finally { setSending(false) }
   }
+  const openModeration = (target: ModerationTarget) => { setModerationTarget(target); setModerationNote(''); setTimeoutMinutes(10); setModerationError(''); setSelectedPlayer('') }
+  const submitModeration = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!moderationTarget || moderating) return
+    setModerating(true); setModerationError('')
+    try { await onModerate(moderationTarget, moderationNote, timeoutMinutes); setModerationTarget(null) }
+    catch (error) { setModerationError(error instanceof Error ? error.message : 'Moderation action failed.') }
+    finally { setModerating(false) }
+  }
 
   return <aside className="chat-rail">
     <div className="chat-title"><MessageCircle /><strong>GAME CHAT</strong><span className="online-count"><i />{onlineCount}</span></div>
@@ -215,16 +233,53 @@ export default function ChatRail({ wallet, network, displayName, onViewProfile, 
       const avatar = isOwn && ownAvatar ? ownAvatar : profileKey ? avatars[profileKey] : ''
       const level = levels[profileKey] ?? 1
       const verified = Boolean(verifiedProfiles[profileKey])
+      const moderator = Boolean(moderatorProfiles[profileKey])
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
       return <article key={item.id} onClick={() => setSelectedPlayer(current => current === item.id ? '' : item.id)}>
         <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); setSelectedPlayer(current => current === item.id ? '' : item.id) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); setSelectedPlayer(current => current === item.id ? '' : item.id) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}{moderator && <b className="moderator-badge" title="Moderator">MOD</b>}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
-        {selectedPlayer === item.id && item.wallet && <div className="chat-user-menu" onClick={event => event.stopPropagation()}><button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: item.message }); setSelectedPlayer('') }}><Reply /> Reply</button><button type="button" onClick={() => { setSelectedPlayer(''); onViewProfile(item.wallet!, item.network) }}>View profile</button><button type="button" disabled={isOwn} onClick={() => { setSelectedPlayer(''); onTipPlayer({ wallet: item.wallet!, network: item.network, name, avatar, level, verified }) }}>{isOwn ? 'Your wallet' : 'Tip player'}</button></div>}
+        {selectedPlayer === item.id && item.wallet && (
+          <div className="chat-user-menu" onClick={event => event.stopPropagation()}>
+            <button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: item.message }); setSelectedPlayer('') }}><Reply /> Reply</button>
+            <button type="button" onClick={() => { setSelectedPlayer(''); onViewProfile(item.wallet!, item.network) }}>View profile</button>
+            <button type="button" disabled={isOwn} onClick={() => { setSelectedPlayer(''); onTipPlayer({ wallet: item.wallet!, network: item.network, name, avatar, level, verified }) }}>{isOwn ? 'Your wallet' : 'Tip player'}</button>
+            {isModerator && !isOwn && (
+              <>
+                <button type="button" className="moderator-action" onClick={() => openModeration({ wallet: item.wallet!, network: item.network, name, action: 'warn' })}><ShieldAlert /> Warn user</button>
+                <button type="button" className="moderator-action timeout" onClick={() => openModeration({ wallet: item.wallet!, network: item.network, name, action: 'timeout' })}><ShieldAlert /> Timeout</button>
+              </>
+            )}
+          </div>
+        )}
       </article>
     }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
     {error && <div className="chat-error">{error}</div>}
     <form className="chat-compose" onSubmit={send}>{replyingTo && <div className="chat-reply-compose"><span>Replying to <strong>{replyingTo.name}</strong><small>{replyingTo.message}</small></span><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X /></button></div>}<textarea value={draft} onChange={event => setDraft(event.target.value.slice(0, 140))} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={140} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? '' : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div><div className="chat-compose-tools"><button type="button" onClick={() => setShowRules(true)}><Info /> Chat Rules</button><button type="button" onClick={() => setShowRules(true)} aria-label="Open chat rules and remaining characters"><MessageCircle /> <output aria-live="polite">{remainingCharacters}</output></button></div></form>
     {showRules && <div className="chat-rules-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowRules(false) }}><section className="chat-rules-modal" role="dialog" aria-modal="true" aria-labelledby="chat-rules-title"><button type="button" onClick={() => setShowRules(false)} aria-label="Close chat rules"><X /></button><Info /><h2 id="chat-rules-title">Chat Rules</h2><div className="chat-rules-placeholder" /></section></div>}
+    {moderationTarget && (
+      <div className="moderation-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !moderating) setModerationTarget(null) }}>
+        <form className="moderation-modal" onSubmit={submitModeration}>
+          <button type="button" onClick={() => setModerationTarget(null)} disabled={moderating} aria-label="Close moderation"><X /></button>
+          <ShieldAlert />
+          <span>MODERATION</span>
+          <h2>{moderationTarget.action === 'timeout' ? 'Timeout player' : 'Warn player'}</h2>
+          <p>{moderationTarget.name}</p>
+          {moderationTarget.action === 'timeout' && (
+            <label>TIMEOUT MINUTES
+              <input type="number" min="1" max="10080" value={timeoutMinutes} onChange={event => setTimeoutMinutes(Math.max(1, Math.min(10080, Number(event.target.value) || 1)))} />
+            </label>
+          )}
+          <label>MODERATOR NOTE
+            <textarea value={moderationNote} onChange={event => setModerationNote(event.target.value.slice(0, 240))} maxLength={240} placeholder="Reason for this action" autoFocus />
+          </label>
+          {moderationError && <small>{moderationError}</small>}
+          <button disabled={!moderationNote.trim() || moderating}>{moderating ? 'Confirming...' : moderationTarget.action === 'timeout' ? 'Apply timeout' : 'Send warning'}</button>
+        </form>
+      </div>
+    )}
+    {/*
+    {moderationTarget && <div className="moderation-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !moderating) setModerationTarget(null) }}><form className="moderation-modal" onSubmit={submitModeration}><button type="button" onClick={() => setModerationTarget(null)} disabled={moderating} aria-label="Close moderation"><X /></button><ShieldAlert /><span>MODERATION</span><h2>{moderationTarget.action === 'timeout' ? 'Timeout player' : 'Warn player'}</h2><p>{moderationTarget.name}</p>{moderationTarget.action === 'timeout' && <label>TIMEOUT MINUTES<input type="number" min="1" max="10080" value={timeoutMinutes} onChange={event => setTimeoutMinutes(Math.max(1, Math.min(10080, Number(event.target.value) || 1))} /></label>}<label>MODERATOR NOTE<textarea value={moderationNote} onChange={event => setModerationNote(event.target.value.slice(0, 240))} maxLength={240} placeholder="Reason for this action" autoFocus /></label>{moderationError && <small>{moderationError}</small>}<button disabled={!moderationNote.trim() || moderating}>{moderating ? 'Confirming…' : moderationTarget.action === 'timeout' ? 'Apply timeout' : 'Send warning'}</button></form></div>}
+    */}
   </aside>
 }
