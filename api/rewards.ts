@@ -5,6 +5,7 @@ import bs58 from 'bs58'
 import { ed25519 } from '@noble/curves/ed25519'
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { keccak_256 } from '@noble/hashes/sha3'
+import { createHash, randomBytes } from 'node:crypto'
 
 type Network = 'solana' | 'megaeth'
 type Action = 'daily-case' | 'cashback'
@@ -30,6 +31,8 @@ function normalizedWallet(network: Network, wallet: string) {
 const statsKey = (network: Network, wallet: string) => `testnet-games:player-stats:${network}:${normalizedWallet(network, wallet)}`
 const profileKey = (network: Network, wallet: string) => `testnet-games:profile:${network}:${normalizedWallet(network, wallet)}`
 const caseKey = (network: Network, wallet: string) => `testnet-games:daily-case:${network}:${normalizedWallet(network, wallet)}`
+const caseSeedKey = (network: Network, wallet: string, day: string) => `testnet-games:daily-case-seed:${network}:${normalizedWallet(network, wallet)}:${day}`
+const caseCommitKey = (network: Network, wallet: string, day: string) => `testnet-games:daily-case-commit:${network}:${normalizedWallet(network, wallet)}:${day}`
 
 function rewardMessage(action: Action, network: Network, wallet: string, timestamp: number) {
   return `Testnet Games rewards\nAction: ${action}\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nTimestamp: ${timestamp}`
@@ -76,8 +79,27 @@ function midnightDelay() {
   return Math.max(1, next.getTime() - Date.now())
 }
 
-function pickCasePrize() {
-  const roll = Math.random() * 100
+function utcDay() { return new Date().toISOString().slice(0, 10) }
+function sha256(value: string) { return createHash('sha256').update(value).digest('hex') }
+
+async function ensureCaseCommitment(redis: Redis, network: Network, wallet: string) {
+  const day = utcDay()
+  const seedKey = caseSeedKey(network, wallet, day)
+  const commitKey = caseCommitKey(network, wallet, day)
+  const ttl = midnightDelay()
+  let seed = await redis.get<string>(seedKey)
+  if (!seed) {
+    const candidate = randomBytes(32).toString('hex')
+    await redis.set(seedKey, candidate, { nx: true, px: ttl })
+    seed = await redis.get<string>(seedKey)
+  }
+  if (!seed) throw new Error('Could not create the case verification commitment.')
+  const commitment = sha256(seed)
+  await redis.set(commitKey, commitment, { nx: true, px: ttl })
+  return { day, seed, commitment }
+}
+
+function pickCasePrize(roll: number) {
   if (roll < 0.001) return { label: '10 SOL credit', kind: 'sol', microsol: 10 * MICROSOL, chance: '0.001%' }
   if (roll < 0.005) return { label: '2.5 SOL credit', kind: 'sol', microsol: 2.5 * MICROSOL, chance: '0.004%' }
   if (roll < 0.014) return { label: '1 SOL credit', kind: 'sol', microsol: MICROSOL, chance: '0.009%' }
@@ -136,8 +158,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const redis = redisClient()
 
     if (request.method === 'GET') {
-      const [stats, dailyCase] = await Promise.all([
+      const [stats, dailyCase, caseProof] = await Promise.all([
         redis.hgetall<Record<string, string | number>>(statsKey(network, wallet)), redis.get(caseKey(network, wallet)),
+        ensureCaseCommitment(redis, network, wallet),
       ])
       // Ensures the signed-in player's existing balance is represented in the
       // global sorted set even if it was earned before this leaderboard update.
@@ -146,6 +169,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const leaderboard = await readLeaderboard(redis)
       return response.status(200).json({
         dinoTokens: tokens, cashbackMicrosol: cashbackAvailableMicrosol(stats), caseAvailable: !dailyCase,
+        caseCommitment: caseProof.commitment, caseDay: caseProof.day,
         leaderboard, tokensPerDollar: TOKENS_PER_USD, cashbackRate: 0.002,
       })
     }
@@ -166,17 +190,23 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(200).json({ message: 'Cashback claim recorded for the future rewards ledger.', claimedMicrosol })
     }
 
+    const commitment = typeof request.body?.caseCommitment === 'string' ? request.body.caseCommitment : ''
+    const proof = await ensureCaseCommitment(redis, network, wallet)
+    if (!commitment || commitment !== proof.commitment) throw new Error('Case commitment changed. Refresh the Daily Case and try again.')
     const claimed = await redis.set(caseKey(network, wallet), String(Date.now()), { nx: true, px: midnightDelay() })
     if (claimed !== 'OK') throw new Error('Your Daily Case has already been opened. Come back after UTC midnight.')
-    const prize = pickCasePrize()
+    const resultHash = sha256(`${proof.seed}:${network}:${wallet}:${proof.day}`)
+    const roll = Number.parseInt(resultHash.slice(0, 13), 16) / 0x1fffffffffffff * 200
+    const prize = pickCasePrize(roll)
+    const verification = { commitment: proof.commitment, seed: proof.seed, day: proof.day, resultHash, roll: Number(roll.toFixed(8)) }
     if (prize.kind === 'dt') {
       const bonus = Number(await redis.hincrby(key, 'dt_bonus', prize.tokens))
       const stats = await redis.hgetall<Record<string, string | number>>(key)
       await redis.zadd(DINO_TOKENS_LEADERBOARD_KEY, { score: tokenBalance({ ...stats, dt_bonus: bonus }), member: `${network}:${wallet}` })
     }
     else await redis.hincrby(key, 'case_credit_microsol', prize.microsol)
-    await redis.hset(key, { last_case: JSON.stringify({ ...prize, openedAt: Date.now() }) })
-    return response.status(200).json({ message: 'Daily Case opened.', prize })
+    await redis.hset(key, { last_case: JSON.stringify({ ...prize, openedAt: Date.now(), verification }) })
+    return response.status(200).json({ message: 'Daily Case opened.', prize, verification })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Rewards request failed.'
     return response.status(/not configured/i.test(message) ? 503 : 400).json({ message })

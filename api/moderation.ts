@@ -82,6 +82,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
     verifySignature(moderatorNetwork, cleanModerator, moderationMessage(action, moderatorNetwork, cleanModerator, targetNetwork, cleanTarget, action === 'timeout' ? durationMinutes : 0, note, timestamp), signature)
     const redis = redisClient()
     if (!await redis.sismember(MODERATORS_KEY, `${moderatorNetwork}:${cleanModerator}`)) throw new Error('This wallet is not a moderator.')
+    if (action === 'timeout' && await redis.sismember(MODERATORS_KEY, `${targetNetwork}:${cleanTarget}`)) {
+      throw new Error('Moderators cannot timeout another moderator.')
+    }
     const createdAt = Date.now()
     let warningCount = Number(await redis.get(warningKey(targetNetwork, cleanTarget)) ?? 0)
     let effectiveAction = action

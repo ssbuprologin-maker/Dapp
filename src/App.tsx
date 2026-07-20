@@ -416,7 +416,7 @@ function App() {
     setMessage(target.action === 'timeout' ? `${target.name} timed out for ${duration} minute${duration === 1 ? '' : 's'}.` : `Warning sent to ${target.name}.`)
   }
 
-  const claimReward = async (action: 'daily-case' | 'cashback') => {
+  const claimReward = async (action: 'daily-case' | 'cashback', caseCommitment?: string) => {
     if (!walletAddress) throw new Error('Connect a wallet first.')
     const network = isMegaEth ? 'megaeth' : 'solana'
     const wallet = isMegaEth ? walletAddress.toLowerCase() : walletAddress
@@ -432,8 +432,8 @@ function App() {
       if (!external.signMessage) throw new Error('This wallet does not support message signing.')
       signature = bs58.encode(await external.signMessage(new TextEncoder().encode(rewardMessage)))
     }
-    const response = await fetch('/api/rewards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, network, wallet, timestamp, signature }) })
-    const body = await response.json() as { message?: string; prize?: { label: string; chance: string } }
+    const response = await fetch('/api/rewards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, network, wallet, timestamp, signature, caseCommitment }) })
+    const body = await response.json() as { message?: string; prize?: { label: string; chance: string }; verification?: { commitment: string; seed: string; day: string; resultHash: string; roll: number } }
     if (!response.ok) throw new Error(body.message ?? 'Reward claim failed.')
     if (body.message) setMessage(body.message)
     return body
@@ -502,7 +502,12 @@ function App() {
       )}
     </main>
 
-    <footer><span>TESTNET ONLY</span><p>Game entry fee: 0.01 {isMegaEth ? 'MegaETH testnet ETH' : 'SOL'}</p><a href={isMegaEth ? 'https://docs.megaeth.com/testnet' : 'https://github.com/anza-xyz/wallet-adapter'} target="_blank" rel="noreferrer">{isMegaEth ? 'MegaETH Testnet Docs' : 'Powered by Anza Wallet Adapter'} <ExternalLink /></a></footer>
+    <footer className="site-footer">
+      <section className="site-footer-brand"><div><span className="site-footer-mark">D</span><strong>DINOGAME</strong></div><p>Testnet dinosaur racing on Solana and MegaETH. Play, compete, collect Dino Tokens, and build your profile.</p><small>TESTNET ONLY · NO REAL VALUE</small></section>
+      <nav aria-label="Games"><strong>Games</strong><span>Dino Run</span><span>Bot Race</span><span>Leaderboard</span></nav>
+      <nav aria-label="Features"><strong>Features</strong><span>Profiles</span><span>Affiliates</span><span>Rewards</span></nav>
+      <nav aria-label="Info"><strong>Info</strong><span>Fair play</span><span>Chat rules</span><span>Support</span></nav>
+    </footer>
 
     {modal && <WalletModal
       step={step}
