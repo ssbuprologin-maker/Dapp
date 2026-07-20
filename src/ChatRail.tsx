@@ -237,19 +237,11 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
       return <article key={item.id} onClick={() => setSelectedPlayer(current => current === item.id ? '' : item.id)}>
         <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); setSelectedPlayer(current => current === item.id ? '' : item.id) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}{moderator && <b className="moderator-badge" title="Moderator">MOD</b>}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b></span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <b className="moderator-badge chat-moderator-mark" title="Moderator" aria-label="Moderator">M</b>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
         {selectedPlayer === item.id && item.wallet && (
           <div className="chat-user-menu" onClick={event => event.stopPropagation()}>
             <button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: item.message }); setSelectedPlayer('') }}><Reply /> Reply</button>
-            <button type="button" onClick={() => { setSelectedPlayer(''); onViewProfile(item.wallet!, item.network) }}>View profile</button>
-            <button type="button" disabled={isOwn} onClick={() => { setSelectedPlayer(''); onTipPlayer({ wallet: item.wallet!, network: item.network, name, avatar, level, verified }) }}>{isOwn ? 'Your wallet' : 'Tip player'}</button>
-            {isModerator && !isOwn && (
-              <>
-                <button type="button" className="moderator-action" onClick={() => openModeration({ wallet: item.wallet!, network: item.network, name, action: 'warn' })}><ShieldAlert /> Warn user</button>
-                <button type="button" className="moderator-action timeout" onClick={() => openModeration({ wallet: item.wallet!, network: item.network, name, action: 'timeout' })}><ShieldAlert /> Timeout</button>
-              </>
-            )}
           </div>
         )}
       </article>

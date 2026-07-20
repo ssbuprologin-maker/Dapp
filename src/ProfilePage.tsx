@@ -2,12 +2,13 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, BadgeCheck, ExternalLink, Gamepad2, Image, MessageCircle, Trophy, UserRound, Wallet } from 'lucide-react'
 import { MEGAETH_EXPLORER_URL } from './megaEth'
 import { levelTier } from './leveling'
+import type { TipTarget } from './TipModal'
 
 type Network = 'solana' | 'megaeth'
 type ProfileSection = 'statistics' | 'transactions' | 'settings'
 type ProfileData = { displayName: string; avatarUrl: string; verified: boolean; moderator: boolean; discordConnected: boolean; nextChangeAt: number; level: number; wagerEquivalentSol: number; wagerIntoLevelSol: number; wagerForNextLevelSol: number; stats: { gamesPlayed: number; wins: number; losses: number; bestScore: number; solWagered: number; ethWagered: number }; transactions: { hash: string; network: Network; playedAt: number; score: number; won: boolean }[] }
 
-export default function ProfilePage({ isOwn, initialSection, wallet, network, displayName, canChangeName, savingName, nextNameChangeAt, onChangeName, onChangeAvatar, onBack }: { isOwn: boolean; initialSection: ProfileSection; wallet: string; network: Network; displayName: string; canChangeName: boolean; savingName: boolean; nextNameChangeAt: number; onChangeName: (name: string) => Promise<void>; onChangeAvatar: (avatar: string) => Promise<void>; onBack: () => void }) {
+export default function ProfilePage({ isOwn, initialSection, wallet, network, displayName, canChangeName, savingName, nextNameChangeAt, onChangeName, onChangeAvatar, onTipPlayer, canModerate, onModerate, onBack }: { isOwn: boolean; initialSection: ProfileSection; wallet: string; network: Network; displayName: string; canChangeName: boolean; savingName: boolean; nextNameChangeAt: number; onChangeName: (name: string) => Promise<void>; onChangeAvatar: (avatar: string) => Promise<void>; onTipPlayer: (target: TipTarget) => void; canModerate: boolean; onModerate: (target: { wallet: string; network: Network; name: string; action: 'warn' | 'timeout' }, note: string, durationMinutes: number) => Promise<void>; onBack: () => void }) {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [name, setName] = useState(displayName)
   const [avatar, setAvatar] = useState(() => localStorage.getItem(`testnet-games:avatar:${network}:${wallet}`) ?? '')
@@ -66,9 +67,18 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
     image.src = cropSource
   }
   const removeAvatar = () => { localStorage.removeItem(`testnet-games:avatar:${network}:${wallet}`); setAvatar(''); setAvatarStatus('Profile picture removed.'); window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet, network, avatar: '' } })); void onChangeAvatar('') }
+  const playerName = profile?.displayName || displayName || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
+  const runModeration = async (action: 'warn' | 'timeout') => {
+    const note = window.prompt(`${action === 'timeout' ? 'Timeout' : 'Warn'} reason for ${playerName}:`)
+    if (!note?.trim()) return
+    const minutes = action === 'timeout' ? Number(window.prompt('Timeout length in minutes (1 to 10080):', '10')) : 0
+    if (action === 'timeout' && (!Number.isFinite(minutes) || minutes < 1 || minutes > 10080)) return
+    await onModerate({ wallet, network, name: playerName, action }, note.trim(), minutes)
+  }
   return <><section className="profile-page">
     <div className="profile-heading"><button onClick={onBack}><ArrowLeft /> Back</button><div><span>PLAYER PROFILE</span><h1>{profile?.displayName || (isOwn ? displayName : '') || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`}{profile?.verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}{profile?.moderator && <b className="moderator-badge" title="Moderator">MOD</b>}</h1></div></div>
     <div className="profile-hero"><button className="profile-avatar" onClick={() => isOwn && avatarInput.current?.click()} title={isOwn ? 'Change profile picture' : 'Profile picture'}>{avatar ? <img src={avatar} alt="Profile" /> : <UserRound />}{isOwn && <span className="profile-avatar-edit"><Image /></span>}</button><input ref={avatarInput} className="avatar-file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={event => { uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /><div><small>{network.toUpperCase()} WALLET · LEVEL {level}</small><code>{wallet}</code><p>Worldwide player profile</p></div></div>
+    {!isOwn && <div className="profile-player-actions"><button type="button" onClick={() => onTipPlayer({ wallet, network, name: playerName, avatar, level, verified: Boolean(profile?.verified) })}>Tip player</button>{canModerate && <><button type="button" className="warn" onClick={() => void runModeration('warn')}>Warn</button><button type="button" className="timeout" onClick={() => void runModeration('timeout')}>Timeout</button></>}</div>}
     <section className={`level-card level-tier-${levelTier(level)}`}><div><span>LEVEL {level}</span><small>{level >= 100 ? 'Maximum level reached.' : `${formatSol(profile?.wagerIntoLevelSol ?? 0)} / ${formatSol(profile?.wagerForNextLevelSol ?? 0.1)} SOL-EQ to the next level`}</small></div><strong>{formatSol(profile?.wagerEquivalentSol ?? 0)} SOL-EQ</strong><div className="level-track"><i style={{ width: `${wagerProgress}%` }} /></div></section>
     <nav className="profile-nav"><button className={section === 'statistics' ? 'active' : ''} onClick={() => setSection('statistics')}>Statistics</button>{isOwn && <button className={section === 'transactions' ? 'active' : ''} onClick={() => setSection('transactions')}>Transactions</button>}{isOwn && <button className={section === 'settings' ? 'active' : ''} onClick={() => setSection('settings')}>Settings</button>}</nav>
     <div className={`profile-stats ${section !== 'statistics' ? 'profile-hidden' : ''}`}><article><Gamepad2 /><span><small>GAMES PLAYED</small><strong>{profile?.stats.gamesPlayed ?? 0}</strong></span></article><article><Wallet /><span><small>SOL WAGERED</small><strong>{(profile?.stats.solWagered ?? 0).toFixed(2)}</strong></span></article><article><Wallet /><span><small>ETH WAGERED</small><strong>{(profile?.stats.ethWagered ?? 0).toFixed(2)}</strong></span></article><article><Trophy /><span><small>NETWORK</small><strong>{network === 'solana' ? 'SOL' : 'MEGA'}</strong></span></article></div>
