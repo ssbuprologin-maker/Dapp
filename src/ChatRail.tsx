@@ -7,7 +7,7 @@ import type { TipTarget } from './TipModal'
 type Network = 'solana' | 'megaeth'
 type ReplyPreview = { id: string; name: string; message: string }
 type ChatMessage = { id: string; name: string; message: string; network: Network; wallet?: string; sentAt: number; replyTo?: ReplyPreview }
-export type ReplyNotification = { id: string; senderName: string; message: string; wallet: string; network: Network; receivedAt: number; read: boolean }
+export type ReplyNotification = { id: string; senderName: string; message: string; wallet: string; network: Network; receivedAt: number; read: boolean; kind?: 'moderation' }
 type ModerationAction = 'warn' | 'timeout'
 export type ModerationTarget = { wallet: string; network: Network; name: string; action: ModerationAction }
 const CHANNEL = 'testnet-games-global-chat'
@@ -237,7 +237,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
       return <article key={item.id} onClick={() => setSelectedPlayer(current => current === item.id ? '' : item.id)}>
         <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <b className="moderator-badge chat-moderator-mark" title="Moderator" aria-label="Moderator">M</b>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" title="This player is a moderator" aria-label="This player is a moderator"><Info /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
         {selectedPlayer === item.id && item.wallet && (
           <div className="chat-user-menu" onClick={event => event.stopPropagation()}>

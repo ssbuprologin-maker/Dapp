@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Gift, RotateCcw, Sparkles, Trophy, X } from 'lucide-react'
 
 type Network = 'solana' | 'megaeth'
@@ -20,8 +20,12 @@ export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboar
   const [claiming, setClaiming] = useState<RewardAction | null>(null)
   const [result, setResult] = useState<{ label: string; chance: string } | null>(null)
   const [error, setError] = useState('')
+  const closeTimer = useRef<number | null>(null)
   const refresh = () => fetch(`/api/rewards?network=${network}&wallet=${encodeURIComponent(wallet)}`).then(response => response.ok ? response.json() as Promise<RewardData> : Promise.reject()).then(setData).catch(() => setError('Rewards are temporarily unavailable.'))
   useEffect(() => { void refresh() }, [network, wallet])
+  useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current) }, [])
+  const keepMenuOpen = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); setMenuOpen(true) }
+  const scheduleMenuClose = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => { setMenuOpen(false); setCashbackOpen(false) }, 260) }
   const claim = async (action: RewardAction) => {
     setClaiming(action); setError('')
     try { const response = await onClaim(action); if (response.prize) setResult(response.prize); await refresh() }
@@ -32,9 +36,9 @@ export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboar
   return <>
     <div className="rewards-header-controls">
       <button type="button" className="header-dt-balance" onClick={onOpenLeaderboard} aria-label="Open Dino Tokens leaderboard"><span className="dt-icon">DT</span><strong>{data ? formatTokens(data.dinoTokens) : '0.00'}</strong></button>
-      <div className="header-daily-case-wrap" onMouseEnter={() => setMenuOpen(true)} onMouseLeave={() => { setMenuOpen(false); setCashbackOpen(false) }}>
-        <button type="button" className="header-daily-case" onClick={() => setMenuOpen(true)}><Gift /> Rewards</button>
-        {menuOpen && <div className="rewards-dropdown">
+      <div className="header-daily-case-wrap" onMouseEnter={keepMenuOpen} onMouseLeave={scheduleMenuClose}>
+        <button type="button" className="header-daily-case" onClick={keepMenuOpen}><Gift /> Rewards</button>
+        {menuOpen && <div className="rewards-dropdown" onMouseEnter={keepMenuOpen} onMouseLeave={scheduleMenuClose}>
           <div className="rewards-dropdown-banner"><div><small>Claim your</small><strong>Rewards</strong></div><Gift /></div>
           <button type="button" className="reward-row" onClick={() => setCaseOpen(true)}><span className="reward-row-icon case"><Gift /></span><span><strong>Daily Case</strong><small className={data?.caseAvailable ? 'ready' : ''}>{data?.caseAvailable ? 'Ready to open' : 'Opened today'}</small></span><b>Open</b></button>
           <div className="cashback-menu-wrap" onMouseEnter={() => setCashbackOpen(true)} onMouseLeave={() => setCashbackOpen(false)}>

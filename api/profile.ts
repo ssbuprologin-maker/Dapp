@@ -17,6 +17,7 @@ const VERIFIED_WALLETS_KEY = 'testnet-games:verified-wallets:v1'
 const MODERATORS_KEY = 'testnet-games:moderators:v1'
 const USERNAME_OWNER_PREFIX = 'testnet-games:username-owner:v1:'
 const MICROSOL = 1_000_000
+const warningKey = (network: Network, wallet: string) => `testnet-games:moderation-warnings:${network}:${normalizedWallet(network, wallet)}`
 
 // Keep this policy at the profile boundary so every consumer (profiles, chat,
 // and future tag UIs) receives a safe, consistently ordered tag list.
@@ -166,7 +167,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const token = process.env.UPSTASH_REDIS_REST_TOKEN!.trim()
       const rawRedis = new Redis({ url, token, automaticDeserialization: false })
       const normalized = normalizedWallet(network, wallet)
-      const [historyRows, leaderboardRows, progression, verified, moderator] = await Promise.all([
+      const [historyRows, leaderboardRows, progression, verified, moderator, warnings] = await Promise.all([
         rawRedis.zrange<string[]>(GAME_HISTORY_KEY, 0, 4_999, { rev: true }),
         // Include legacy games written before game history was separated from
         // personal-best leaderboard entries.
@@ -174,6 +175,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
         redis.hgetall<Record<string, string | number>>(playerStatsKey(network, wallet)),
         redis.sismember(VERIFIED_WALLETS_KEY, `${network}:${normalized}`),
         redis.sismember(MODERATORS_KEY, `${network}:${normalized}`),
+        redis.get(warningKey(network, normalized)),
       ])
       const gamesByTransaction = new Map<string, LeaderboardRecord>()
       ;[...historyRows, ...leaderboardRows].forEach(row => {
@@ -191,7 +193,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const nextLevelWager = level >= 100 ? currentLevelWager : requiredSolForLevel(level + 1)
       const tags = allowedPlayerTags([Boolean(verified) ? 'verified' : '', Boolean(moderator) ? 'moderator' : ''])
       return response.status(200).json({
-        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', tags, verified: tags.includes('verified'), moderator: tags.includes('moderator'), discordConnected: Boolean(profile?.discordId),
+        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', tags, verified: tags.includes('verified'), moderator: tags.includes('moderator'), warningCount: Number(warnings ?? 0), discordConnected: Boolean(profile?.discordId),
         nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS,
         level, wagerEquivalentSol, wagerIntoLevelSol: level >= 100 ? 0 : wagerEquivalentSol - currentLevelWager,
         wagerForNextLevelSol: level >= 100 ? 0 : nextLevelWager - currentLevelWager,

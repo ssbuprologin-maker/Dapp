@@ -1,12 +1,12 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, BadgeCheck, ExternalLink, Gamepad2, Image, MessageCircle, Trophy, UserRound, Wallet } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, ExternalLink, Gamepad2, Image, MessageCircle, ShieldAlert, Trophy, UserRound, Wallet, X } from 'lucide-react'
 import { MEGAETH_EXPLORER_URL } from './megaEth'
 import { levelTier } from './leveling'
 import type { TipTarget } from './TipModal'
 
 type Network = 'solana' | 'megaeth'
 type ProfileSection = 'statistics' | 'transactions' | 'settings'
-type ProfileData = { displayName: string; avatarUrl: string; verified: boolean; moderator: boolean; discordConnected: boolean; nextChangeAt: number; level: number; wagerEquivalentSol: number; wagerIntoLevelSol: number; wagerForNextLevelSol: number; stats: { gamesPlayed: number; wins: number; losses: number; bestScore: number; solWagered: number; ethWagered: number }; transactions: { hash: string; network: Network; playedAt: number; score: number; won: boolean }[] }
+type ProfileData = { displayName: string; avatarUrl: string; verified: boolean; moderator: boolean; warningCount: number; discordConnected: boolean; nextChangeAt: number; level: number; wagerEquivalentSol: number; wagerIntoLevelSol: number; wagerForNextLevelSol: number; stats: { gamesPlayed: number; wins: number; losses: number; bestScore: number; solWagered: number; ethWagered: number }; transactions: { hash: string; network: Network; playedAt: number; score: number; won: boolean }[] }
 
 export default function ProfilePage({ isOwn, initialSection, wallet, network, displayName, canChangeName, savingName, nextNameChangeAt, onChangeName, onChangeAvatar, onTipPlayer, canModerate, onModerate, onBack }: { isOwn: boolean; initialSection: ProfileSection; wallet: string; network: Network; displayName: string; canChangeName: boolean; savingName: boolean; nextNameChangeAt: number; onChangeName: (name: string) => Promise<void>; onChangeAvatar: (avatar: string) => Promise<void>; onTipPlayer: (target: TipTarget) => void; canModerate: boolean; onModerate: (target: { wallet: string; network: Network; name: string; action: 'warn' | 'timeout' }, note: string, durationMinutes: number) => Promise<void>; onBack: () => void }) {
   const [profile, setProfile] = useState<ProfileData | null>(null)
@@ -21,6 +21,11 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
   const [cropZoom, setCropZoom] = useState(1)
   const [cropPositionY, setCropPositionY] = useState(0)
   const [section, setSection] = useState<ProfileSection>(initialSection)
+  const [moderationAction, setModerationAction] = useState<'warn' | 'timeout' | null>(null)
+  const [moderationNote, setModerationNote] = useState('')
+  const [timeoutMinutes, setTimeoutMinutes] = useState(10)
+  const [moderating, setModerating] = useState(false)
+  const [moderationError, setModerationError] = useState('')
   const avatarInput = useRef<HTMLInputElement>(null)
   useEffect(() => { fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(wallet)}`).then(response => response.json()).then((data: ProfileData) => { setProfile(data); if (data.avatarUrl) { setAvatar(data.avatarUrl); if (isOwn) localStorage.setItem(`testnet-games:avatar:${network}:${wallet}`, data.avatarUrl) } }).catch(() => undefined) }, [isOwn, network, wallet, displayName])
   useEffect(() => setName(displayName), [displayName])
@@ -68,17 +73,18 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
   }
   const removeAvatar = () => { localStorage.removeItem(`testnet-games:avatar:${network}:${wallet}`); setAvatar(''); setAvatarStatus('Profile picture removed.'); window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet, network, avatar: '' } })); void onChangeAvatar('') }
   const playerName = profile?.displayName || displayName || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
-  const runModeration = async (action: 'warn' | 'timeout') => {
-    const note = window.prompt(`${action === 'timeout' ? 'Timeout' : 'Warn'} reason for ${playerName}:`)
-    if (!note?.trim()) return
-    const minutes = action === 'timeout' ? Number(window.prompt('Timeout length in minutes (1 to 10080):', '10')) : 0
-    if (action === 'timeout' && (!Number.isFinite(minutes) || minutes < 1 || minutes > 10080)) return
-    await onModerate({ wallet, network, name: playerName, action }, note.trim(), minutes)
+  const runModeration = async () => {
+    if (!moderationAction) return
+    setModerating(true); setModerationError('')
+    try { await onModerate({ wallet, network, name: playerName, action: moderationAction }, moderationNote.trim(), moderationAction === 'timeout' ? timeoutMinutes : 0); if (moderationAction === 'warn') setProfile(current => current ? { ...current, warningCount: current.warningCount + 1 } : current); setModerationAction(null); setModerationNote('') }
+    catch (error) { setModerationError(error instanceof Error ? error.message : 'Moderation action failed.') }
+    finally { setModerating(false) }
   }
   return <><section className="profile-page">
     <div className="profile-heading"><button onClick={onBack}><ArrowLeft /> Back</button><div><span>PLAYER PROFILE</span><h1>{profile?.displayName || (isOwn ? displayName : '') || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`}{profile?.verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}{profile?.moderator && <b className="moderator-badge" title="Moderator">MOD</b>}</h1></div></div>
     <div className="profile-hero"><button className="profile-avatar" onClick={() => isOwn && avatarInput.current?.click()} title={isOwn ? 'Change profile picture' : 'Profile picture'}>{avatar ? <img src={avatar} alt="Profile" /> : <UserRound />}{isOwn && <span className="profile-avatar-edit"><Image /></span>}</button><input ref={avatarInput} className="avatar-file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={event => { uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /><div><small>{network.toUpperCase()} WALLET · LEVEL {level}</small><code>{wallet}</code><p>Worldwide player profile</p></div></div>
-    {!isOwn && <div className="profile-player-actions"><button type="button" onClick={() => onTipPlayer({ wallet, network, name: playerName, avatar, level, verified: Boolean(profile?.verified) })}>Tip player</button>{canModerate && <><button type="button" className="warn" onClick={() => void runModeration('warn')}>Warn</button><button type="button" className="timeout" onClick={() => void runModeration('timeout')}>Timeout</button></>}</div>}
+    {!isOwn && <div className="profile-player-actions"><button type="button" onClick={() => onTipPlayer({ wallet, network, name: playerName, avatar, level, verified: Boolean(profile?.verified) })}>Tip player</button>{canModerate && <><span>{profile?.warningCount ?? 0} warnings</span><button type="button" className="warn" onClick={() => { setModerationAction('warn'); setModerationError('') }}>Warn</button><button type="button" className="timeout" onClick={() => { setModerationAction('timeout'); setModerationError('') }}>Timeout</button></>}</div>}
+    {moderationAction && <div className="moderation-backdrop"><section className="moderation-modal profile-moderation-modal"><button type="button" onClick={() => !moderating && setModerationAction(null)} aria-label="Close moderation"><X /></button><ShieldAlert /><span>MODERATION</span><h2>{moderationAction === 'timeout' ? 'Timeout player' : 'Warn player'}</h2><p>{playerName}</p>{moderationAction === 'timeout' && <label>TIMEOUT MINUTES<input type="number" min="1" max="10080" value={timeoutMinutes} onChange={event => setTimeoutMinutes(Math.max(1, Math.min(10080, Number(event.target.value) || 1)))} /></label>}<label>MODERATOR NOTE<textarea value={moderationNote} onChange={event => setModerationNote(event.target.value.slice(0, 240))} maxLength={240} placeholder="Reason for this action" autoFocus /></label>{moderationError && <small>{moderationError}</small>}<button type="button" disabled={!moderationNote.trim() || moderating} onClick={() => void runModeration()}>{moderating ? 'Confirming...' : moderationAction === 'timeout' ? 'Apply timeout' : 'Send warning'}</button></section></div>}
     <section className={`level-card level-tier-${levelTier(level)}`}><div><span>LEVEL {level}</span><small>{level >= 100 ? 'Maximum level reached.' : `${formatSol(profile?.wagerIntoLevelSol ?? 0)} / ${formatSol(profile?.wagerForNextLevelSol ?? 0.1)} SOL-EQ to the next level`}</small></div><strong>{formatSol(profile?.wagerEquivalentSol ?? 0)} SOL-EQ</strong><div className="level-track"><i style={{ width: `${wagerProgress}%` }} /></div></section>
     <nav className="profile-nav"><button className={section === 'statistics' ? 'active' : ''} onClick={() => setSection('statistics')}>Statistics</button>{isOwn && <button className={section === 'transactions' ? 'active' : ''} onClick={() => setSection('transactions')}>Transactions</button>}{isOwn && <button className={section === 'settings' ? 'active' : ''} onClick={() => setSection('settings')}>Settings</button>}</nav>
     <div className={`profile-stats ${section !== 'statistics' ? 'profile-hidden' : ''}`}><article><Gamepad2 /><span><small>GAMES PLAYED</small><strong>{profile?.stats.gamesPlayed ?? 0}</strong></span></article><article><Wallet /><span><small>SOL WAGERED</small><strong>{(profile?.stats.solWagered ?? 0).toFixed(2)}</strong></span></article><article><Wallet /><span><small>ETH WAGERED</small><strong>{(profile?.stats.ethWagered ?? 0).toFixed(2)}</strong></span></article><article><Trophy /><span><small>NETWORK</small><strong>{network === 'solana' ? 'SOL' : 'MEGA'}</strong></span></article></div>

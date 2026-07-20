@@ -11,6 +11,8 @@ type ModerationAction = 'warn' | 'timeout'
 
 const MODERATORS_KEY = 'testnet-games:moderators:v1'
 const encoder = new TextEncoder()
+const warningKey = (network: Network, wallet: string) => `testnet-games:moderation-warnings:${network}:${wallet}`
+const notificationKey = (network: Network, wallet: string) => `testnet-games:notifications:${network}:${wallet}`
 
 function redisClient() {
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim()
@@ -51,6 +53,15 @@ function verifySignature(network: Network, wallet: string, message: string, sign
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   response.setHeader('Cache-Control', 'no-store')
   try {
+    if (request.method === 'GET') {
+      const network = request.query.network as Network
+      const wallet = typeof request.query.wallet === 'string' ? normalizeWallet(network, request.query.wallet) : ''
+      if ((network !== 'solana' && network !== 'megaeth') || !wallet) throw new Error('A valid wallet and network are required.')
+      const redis = redisClient()
+      const rows = await redis.lrange<string>(notificationKey(network, wallet), 0, 29)
+      const notifications = rows.flatMap(row => { try { return [JSON.parse(row)] } catch { return [] } })
+      return response.status(200).json({ notifications })
+    }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
     const action = request.body?.action
     const moderatorNetwork = request.body?.moderatorNetwork
@@ -71,12 +82,31 @@ export default async function handler(request: VercelRequest, response: VercelRe
     verifySignature(moderatorNetwork, cleanModerator, moderationMessage(action, moderatorNetwork, cleanModerator, targetNetwork, cleanTarget, action === 'timeout' ? durationMinutes : 0, note, timestamp), signature)
     const redis = redisClient()
     if (!await redis.sismember(MODERATORS_KEY, `${moderatorNetwork}:${cleanModerator}`)) throw new Error('This wallet is not a moderator.')
-    const record = { action, moderator: `${moderatorNetwork}:${cleanModerator}`, target: `${targetNetwork}:${cleanTarget}`, note, durationMinutes: action === 'timeout' ? durationMinutes : 0, createdAt: Date.now() }
+    const createdAt = Date.now()
+    let warningCount = Number(await redis.get(warningKey(targetNetwork, cleanTarget)) ?? 0)
+    let effectiveAction = action
+    let effectiveDuration = action === 'timeout' ? durationMinutes : 0
+    let automatic = false
+    if (action === 'warn') {
+      warningCount = Number(await redis.incr(warningKey(targetNetwork, cleanTarget)))
+      if (warningCount > 3) { effectiveAction = 'timeout'; effectiveDuration = 10; automatic = true }
+    }
+    const record = { action: effectiveAction, requestedAction: action, moderator: `${moderatorNetwork}:${cleanModerator}`, target: `${targetNetwork}:${cleanTarget}`, note, durationMinutes: effectiveDuration, warningCount, automatic, createdAt }
     const auditKey = `testnet-games:moderation-history:${targetNetwork}:${cleanTarget}`
     await redis.lpush(auditKey, JSON.stringify(record))
     await redis.ltrim(auditKey, 0, 49)
-    if (action === 'timeout') await redis.set(`testnet-games:chat-timeout:${targetNetwork}:${cleanTarget}`, JSON.stringify(record), { px: durationMinutes * 60_000 })
-    return response.status(200).json({ action, expiresAt: action === 'timeout' ? Date.now() + durationMinutes * 60_000 : null })
+    if (effectiveAction === 'timeout') await redis.set(`testnet-games:chat-timeout:${targetNetwork}:${cleanTarget}`, JSON.stringify(record), { px: effectiveDuration * 60_000 })
+    const notification = {
+      id: `moderation-${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+      type: effectiveAction,
+      title: effectiveAction === 'timeout' ? (automatic ? 'Timed out after warnings' : 'Chat timeout') : 'Warning received',
+      message: automatic ? `You received warning #${warningCount}: ${note}. You have been timed out for 10 minutes.` : effectiveAction === 'timeout' ? `${note}. You are timed out for ${effectiveDuration} minute${effectiveDuration === 1 ? '' : 's'}.` : `Warning #${warningCount}: ${note}`,
+      receivedAt: createdAt,
+      read: false,
+    }
+    await redis.lpush(notificationKey(targetNetwork, cleanTarget), JSON.stringify(notification))
+    await redis.ltrim(notificationKey(targetNetwork, cleanTarget), 0, 29)
+    return response.status(200).json({ action: effectiveAction, warningCount, automatic, expiresAt: effectiveAction === 'timeout' ? createdAt + effectiveDuration * 60_000 : null })
   } catch (error) {
     return response.status(400).json({ message: error instanceof Error ? error.message : 'Moderation request failed.' })
   }
