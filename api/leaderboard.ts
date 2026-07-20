@@ -10,8 +10,10 @@ const SOLANA_ENTRY_LAMPORTS = 10_000_000
 const MEGAETH_ENTRY_WEI = 10_000_000_000_000_000n
 const MEGAETH_RPC_URL = 'https://carrot.megaeth.com/rpc'
 const PRICE_HIGH_WATER_KEY = 'testnet-games:xp-usd-high-water:v1'
+const DINO_TOKENS_LEADERBOARD_KEY = 'testnet-games:dino-tokens:v1'
 const ENTRY_ASSET_AMOUNT = 0.01
 const MICROSOL = 1_000_000
+const MICROUSD = 1_000_000
 
 type Network = 'solana' | 'megaeth'
 type LeaderboardRecord = {
@@ -90,6 +92,15 @@ async function entryEquivalentMicrosol(redis: Redis, network: Network) {
     ['ETH_SOL_RATIO', String(currentRatio)],
   ))
   return Math.max(1, Math.round(ENTRY_ASSET_AMOUNT * highWaterRatio * MICROSOL))
+}
+
+// DT is denominated in USD at the moment a verified entry is recorded. We use
+// the same high-water quote policy as progression, so a later price drop never
+// removes already-earned value.
+async function entryUsdWagerMicros(redis: Redis, network: Network) {
+  const asset = network === 'solana' ? 'SOL' : 'ETH'
+  const usd = await highWaterUsdPrice(redis, asset)
+  return Math.max(1, Math.round(ENTRY_ASSET_AMOUNT * Math.max(usd, 1) * MICROUSD))
 }
 
 function redisClient() {
@@ -226,14 +237,22 @@ async function readPlayerLeaderboardState(redis: Redis, record: LeaderboardRecor
 
 async function awardProgression(redis: Redis, record: LeaderboardRecord, isNewPersonalBest: boolean) {
   const survivalSeconds = Math.floor(record.score / 1000)
-  const entryMicrosol = await entryEquivalentMicrosol(redis, record.network)
+  const [entryMicrosol, entryWagerUsdMicros] = await Promise.all([
+    entryEquivalentMicrosol(redis, record.network), entryUsdWagerMicros(redis, record.network),
+  ])
   const key = playerStatsKey(record.network, record.walletAddress ?? '')
-  const wagerMicrosol = Number(await redis.hincrby(key, 'wager_microsol', entryMicrosol))
+  const [wagerMicrosol, wagerUsdMicros, dtBonus] = await Promise.all([
+    redis.hincrby(key, 'wager_microsol', entryMicrosol),
+    redis.hincrby(key, 'wager_usd_micros', entryWagerUsdMicros),
+    redis.hget<number>(key, 'dt_bonus'),
+  ])
+  const dinoTokens = Number(wagerUsdMicros) / MICROUSD + Number(dtBonus ?? 0)
   await Promise.all([
     redis.hincrby(key, 'games', 1),
     redis.hincrby(key, record.won ? 'wins' : 'losses', 1),
     redis.hincrby(key, 'survival_seconds', survivalSeconds),
     redis.hset(key, { last_entry_microsol: entryMicrosol }),
+    redis.zadd(DINO_TOKENS_LEADERBOARD_KEY, { score: dinoTokens, member: `${record.network}:${record.walletAddress ?? ''}` }),
     ...(isNewPersonalBest ? [redis.hset(key, { best_score: record.score })] : []),
   ])
   return { wagerMicrosol, level: levelFromWagerMicrosol(wagerMicrosol) }

@@ -9,7 +9,9 @@ import { keccak_256 } from '@noble/hashes/sha3'
 type Network = 'solana' | 'megaeth'
 type Action = 'daily-case' | 'cashback'
 const MICROSOL = 1_000_000
-const TOKENS_PER_SOL = 64
+const MICROUSD = 1_000_000
+const DINO_TOKENS_LEADERBOARD_KEY = 'testnet-games:dino-tokens:v1'
+const TOKENS_PER_USD = 1
 const encoder = new TextEncoder()
 
 function redisClient() {
@@ -53,8 +55,15 @@ function verifySignature(network: Network, wallet: string, message: string, sign
 }
 
 function tokenBalance(stats: Record<string, string | number> | null) {
+  const wagerUsdMicros = Number(stats?.wager_usd_micros ?? 0)
   const wagerMicrosol = Number(stats?.wager_microsol ?? 0)
-  return Math.round(((wagerMicrosol / MICROSOL) * TOKENS_PER_SOL + Number(stats?.dt_bonus ?? 0)) * 10_000) / 10_000
+  // Older verified rounds predate USD wager tracking. Preserve their already
+  // earned DT at the previous rate, while every new verified round uses the
+  // 1 DT per $1 rule recorded by api/leaderboard.
+  const earnedFromWager = wagerUsdMicros > 0
+    ? (wagerUsdMicros / MICROUSD) * TOKENS_PER_USD
+    : (wagerMicrosol / MICROSOL) * 64
+  return Math.round((earnedFromWager + Number(stats?.dt_bonus ?? 0)) * 10_000) / 10_000
 }
 
 function cashbackAvailableMicrosol(stats: Record<string, string | number> | null) {
@@ -78,6 +87,23 @@ function pickCasePrize() {
 }
 
 async function readLeaderboard(redis: Redis) {
+  const members = await redis.zrange<string[]>(DINO_TOKENS_LEADERBOARD_KEY, 0, 49, { rev: true })
+  if (members.length) {
+    const players = members.flatMap(member => {
+      const separator = member.indexOf(':')
+      const network = member.slice(0, separator) as Network
+      const wallet = member.slice(separator + 1)
+      return (network === 'solana' || network === 'megaeth') && wallet ? [{ network, wallet }] : []
+    })
+    const [stats, profiles] = await Promise.all([
+      redis.mget<(Record<string, string | number> | null)[]>(...players.map(player => statsKey(player.network, player.wallet))),
+      redis.mget<(Record<string, string> | null)[]>(...players.map(player => profileKey(player.network, player.wallet))),
+    ])
+    return players.map((player, index) => ({
+      rank: index + 1, wallet: player.wallet, network: player.network, tokens: tokenBalance(stats[index]),
+      name: profiles[index]?.displayName || `${player.wallet.slice(0, 5)}...${player.wallet.slice(-4)}`,
+    })).filter(row => row.tokens > 0)
+  }
   let cursor = '0'
   const rows: { wallet: string; network: Network; tokens: number }[] = []
   do {
@@ -107,12 +133,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const redis = redisClient()
 
     if (request.method === 'GET') {
-      const [stats, dailyCase, leaderboard] = await Promise.all([
-        redis.hgetall<Record<string, string | number>>(statsKey(network, wallet)), redis.get(caseKey(network, wallet)), readLeaderboard(redis),
+      const [stats, dailyCase] = await Promise.all([
+        redis.hgetall<Record<string, string | number>>(statsKey(network, wallet)), redis.get(caseKey(network, wallet)),
       ])
+      // Ensures the signed-in player's existing balance is represented in the
+      // global sorted set even if it was earned before this leaderboard update.
+      const tokens = tokenBalance(stats)
+      if (tokens > 0) await redis.zadd(DINO_TOKENS_LEADERBOARD_KEY, { score: tokens, member: `${network}:${wallet}` })
+      const leaderboard = await readLeaderboard(redis)
       return response.status(200).json({
-        dinoTokens: tokenBalance(stats), cashbackMicrosol: cashbackAvailableMicrosol(stats), caseAvailable: !dailyCase,
-        leaderboard, tokensPerSol: TOKENS_PER_SOL, cashbackRate: 0.002,
+        dinoTokens: tokens, cashbackMicrosol: cashbackAvailableMicrosol(stats), caseAvailable: !dailyCase,
+        leaderboard, tokensPerDollar: TOKENS_PER_USD, cashbackRate: 0.002,
       })
     }
 
@@ -135,7 +166,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const claimed = await redis.set(caseKey(network, wallet), String(Date.now()), { nx: true, px: midnightDelay() })
     if (claimed !== 'OK') throw new Error('Your Daily Case has already been opened. Come back after UTC midnight.')
     const prize = pickCasePrize()
-    if (prize.kind === 'dt') await redis.hincrby(key, 'dt_bonus', prize.tokens)
+    if (prize.kind === 'dt') {
+      const bonus = Number(await redis.hincrby(key, 'dt_bonus', prize.tokens))
+      const stats = await redis.hgetall<Record<string, string | number>>(key)
+      await redis.zadd(DINO_TOKENS_LEADERBOARD_KEY, { score: tokenBalance({ ...stats, dt_bonus: bonus }), member: `${network}:${wallet}` })
+    }
     else await redis.hincrby(key, 'case_credit_microsol', prize.microsol)
     await redis.hset(key, { last_case: JSON.stringify({ ...prize, openedAt: Date.now() }) })
     return response.status(200).json({ message: 'Daily Case opened.', prize })

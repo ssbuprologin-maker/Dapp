@@ -4,7 +4,7 @@ import { Gift, RotateCcw, Sparkles, Trophy, X } from 'lucide-react'
 
 type Network = 'solana' | 'megaeth'
 type RewardAction = 'daily-case' | 'cashback'
-type RewardData = { dinoTokens: number; cashbackMicrosol: number; caseAvailable: boolean; tokensPerSol: number; leaderboard: { rank: number; wallet: string; network: Network; tokens: number; name: string }[] }
+type RewardData = { dinoTokens: number; cashbackMicrosol: number; caseAvailable: boolean; tokensPerDollar: number; leaderboard: { rank: number; wallet: string; network: Network; tokens: number; name: string }[] }
 const formatTokens = (value: number) => {
   const absolute = Math.abs(value)
   if (absolute >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}M`
@@ -26,7 +26,7 @@ export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboar
   useEffect(() => { void refresh() }, [network, wallet])
   useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current) }, [])
   const keepMenuOpen = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); setMenuOpen(true) }
-  const scheduleMenuClose = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => { setMenuOpen(false); setCashbackOpen(false) }, 260) }
+  const scheduleMenuClose = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => { setMenuOpen(false); setCashbackOpen(false) }, 140) }
   const claim = async (action: RewardAction) => {
     setClaiming(action); setError('')
     try { const response = await onClaim(action); if (response.prize) setResult(response.prize); await refresh() }
