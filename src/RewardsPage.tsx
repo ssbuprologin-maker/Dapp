@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Gift, RotateCcw, Sparkles, Trophy, X } from 'lucide-react'
 
 type Network = 'solana' | 'megaeth'
@@ -48,6 +49,9 @@ export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboar
         </div>}
       </div>
     </div>
+    {caseOpen && createPortal(<div className="reward-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setCaseOpen(false) }}><section className="daily-case-modal"><button type="button" onClick={() => setCaseOpen(false)} aria-label="Close Daily Case"><X /></button><header><Gift /><strong>DAILY CASE</strong></header><div className="daily-case-main"><span className="case-chest"><Gift /></span><h2>{result ? 'Case opened!' : 'Dino Case'}</h2><p>{result ? `${result.label} - ${result.chance}` : 'Open one case every day. Rewards are added to your testnet rewards ledger.'}</p><button type="button" className="open-case" disabled={!data?.caseAvailable || claiming !== null} onClick={() => void claim('daily-case')}><Sparkles /> {claiming === 'daily-case' ? 'OPENING...' : result ? 'OPENED TODAY' : 'OPEN CASE'}</button></div><div className="case-items"><span>Items</span><div><b>10 SOL credit <small>0.001%</small></b><b>2.5 SOL credit <small>0.004%</small></b><b>1 SOL credit <small>0.009%</small></b><b>0.1 SOL credit <small>0.076%</small></b><b>0.001 SOL credit <small>10.335%</small></b><b>15 DT <small>89.575%</small></b></div></div>{error && <p className="reward-error">{error}</p>}</section></div>, document.body)}
+    {/*
     {caseOpen && <div className="reward-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setCaseOpen(false) }}><section className="daily-case-modal"><button type="button" onClick={() => setCaseOpen(false)} aria-label="Close Daily Case"><X /></button><header><Gift /><strong>DAILY CASE</strong></header><div className="daily-case-main"><span className="case-chest"><Gift /></span><h2>{result ? 'Case opened!' : 'Dino Case'}</h2><p>{result ? `${result.label} · ${result.chance}` : 'Open one case every day. Rewards are added to your testnet rewards ledger.'}</p><button type="button" className="open-case" disabled={!data?.caseAvailable || claiming !== null} onClick={() => void claim('daily-case')}><Sparkles /> {claiming === 'daily-case' ? 'OPENING...' : result ? 'OPENED TODAY' : 'OPEN CASE'}</button></div><div className="case-items"><span>Items</span><div><b>10 SOL credit <small>0.001%</small></b><b>2.5 SOL credit <small>0.004%</small></b><b>1 SOL credit <small>0.009%</small></b><b>0.1 SOL credit <small>0.076%</small></b><b>0.001 SOL credit <small>10.335%</small></b><b>15 DT <small>89.575%</small></b></div></div>{error && <p className="reward-error">{error}</p>}</section></div>}
+    */}
   </>
 }
