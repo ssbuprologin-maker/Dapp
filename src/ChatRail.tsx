@@ -49,7 +49,7 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   return normalizeChatMessage(message.data as Partial<ChatMessage>, network, wallet)
 }
 
-export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void> }) {
+export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate, collapsed, onToggleCollapsed }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void>; collapsed: boolean; onToggleCollapsed: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -225,7 +225,8 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     finally { setModerating(false) }
   }
 
-  return <aside className="chat-rail">
+  return <aside className={`chat-rail ${collapsed ? 'is-collapsed' : ''}`}>
+    <button type="button" className="chat-rail-toggle" onClick={onToggleCollapsed} aria-label={collapsed ? 'Open game chat' : 'Close game chat'} aria-expanded={!collapsed}><MessageCircle /></button>
     <div className="chat-title"><MessageCircle /><strong>GAME CHAT</strong><span className="online-count"><i />{onlineCount}</span></div>
     <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => {
       const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network)

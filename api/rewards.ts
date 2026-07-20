@@ -96,7 +96,7 @@ async function readLeaderboard(redis: Redis) {
       return (network === 'solana' || network === 'megaeth') && wallet ? [{ network, wallet }] : []
     })
     const [stats, profiles] = await Promise.all([
-      redis.mget<(Record<string, string | number> | null)[]>(...players.map(player => statsKey(player.network, player.wallet))),
+      Promise.all(players.map(player => redis.hgetall<Record<string, string | number>>(statsKey(player.network, player.wallet)))),
       redis.mget<(Record<string, string> | null)[]>(...players.map(player => profileKey(player.network, player.wallet))),
     ])
     return players.map((player, index) => ({
@@ -110,7 +110,10 @@ async function readLeaderboard(redis: Redis) {
     const [next, keys] = await redis.scan(cursor, { match: 'testnet-games:player-stats:*', count: 250 })
     cursor = next
     if (!keys.length) continue
-    const stats = await redis.mget<(Record<string, string | number> | null)[]>(...keys)
+    // Player statistics are Redis hashes, so they must be read with HGETALL.
+    // MGET only supports string keys and was the reason populated players
+    // could appear as an empty DT leaderboard.
+    const stats = await Promise.all(keys.map(key => redis.hgetall<Record<string, string | number>>(key)))
     keys.forEach((key, index) => {
       const [, , network, ...walletParts] = key.split(':')
       const wallet = walletParts.join(':')
