@@ -26,7 +26,7 @@ export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboar
   useEffect(() => { void refresh() }, [network, wallet])
   useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current) }, [])
   const keepMenuOpen = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); setMenuOpen(true) }
-  const scheduleMenuClose = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => { setMenuOpen(false); setCashbackOpen(false) }, 140) }
+  const scheduleMenuClose = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => { setMenuOpen(false); setCashbackOpen(false) }, 85) }
   const claim = async (action: RewardAction) => {
     setClaiming(action); setError('')
     try { const response = await onClaim(action); if (response.prize) setResult(response.prize); await refresh() }

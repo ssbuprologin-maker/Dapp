@@ -227,6 +227,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
 
   return <aside className={`chat-rail ${collapsed ? 'is-collapsed' : ''}`}>
     <button type="button" className="chat-rail-toggle" onClick={onToggleCollapsed} aria-label={collapsed ? 'Open game chat' : 'Close game chat'} aria-expanded={!collapsed}><MessageCircle /></button>
+    <div className="chat-rail-content">
     <div className="chat-title"><MessageCircle /><strong>GAME CHAT</strong><span className="online-count"><i />{onlineCount}</span></div>
     <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => {
       const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network)
@@ -274,5 +275,6 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     {/*
     {moderationTarget && <div className="moderation-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !moderating) setModerationTarget(null) }}><form className="moderation-modal" onSubmit={submitModeration}><button type="button" onClick={() => setModerationTarget(null)} disabled={moderating} aria-label="Close moderation"><X /></button><ShieldAlert /><span>MODERATION</span><h2>{moderationTarget.action === 'timeout' ? 'Timeout player' : 'Warn player'}</h2><p>{moderationTarget.name}</p>{moderationTarget.action === 'timeout' && <label>TIMEOUT MINUTES<input type="number" min="1" max="10080" value={timeoutMinutes} onChange={event => setTimeoutMinutes(Math.max(1, Math.min(10080, Number(event.target.value) || 1))} /></label>}<label>MODERATOR NOTE<textarea value={moderationNote} onChange={event => setModerationNote(event.target.value.slice(0, 240))} maxLength={240} placeholder="Reason for this action" autoFocus /></label>{moderationError && <small>{moderationError}</small>}<button disabled={!moderationNote.trim() || moderating}>{moderating ? 'Confirming…' : moderationTarget.action === 'timeout' ? 'Apply timeout' : 'Send warning'}</button></form></div>}
     */}
+    </div>
   </aside>
 }
