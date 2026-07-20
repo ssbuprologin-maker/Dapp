@@ -58,8 +58,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const wallet = typeof request.query.wallet === 'string' ? normalizeWallet(network, request.query.wallet) : ''
       if ((network !== 'solana' && network !== 'megaeth') || !wallet) throw new Error('A valid wallet and network are required.')
       const redis = redisClient()
-      const rows = await redis.lrange<string>(notificationKey(network, wallet), 0, 29)
-      const notifications = rows.flatMap(row => { try { return [JSON.parse(row)] } catch { return [] } })
+      const rows = await redis.lrange<unknown>(notificationKey(network, wallet), 0, 29)
+      const notifications = rows.flatMap(row => {
+        if (row && typeof row === 'object') return [row]
+        if (typeof row !== 'string') return []
+        try {
+          const parsed: unknown = JSON.parse(row)
+          return parsed && typeof parsed === 'object' ? [parsed] : []
+        } catch { return [] }
+      })
       return response.status(200).json({ notifications })
     }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })

@@ -127,7 +127,7 @@ function App() {
       } catch { /* Notification refresh is non-blocking. */ }
     }
     void loadModerationNotifications()
-    const interval = window.setInterval(() => void loadModerationNotifications(), 20_000)
+    const interval = window.setInterval(() => void loadModerationNotifications(), 5_000)
     return () => { active = false; window.clearInterval(interval) }
   }, [isMegaEth, showSideAlert, walletAddress])
 
@@ -406,28 +406,37 @@ function App() {
     }
   }
   const moderatePlayer = async (target: ModerationTarget, note: string, durationMinutes: number) => {
-    if (!walletAddress) throw new Error('Connect a moderator wallet first.')
-    const moderatorNetwork = isMegaEth ? 'megaeth' : 'solana'
-    const moderator = isMegaEth ? walletAddress.toLowerCase() : walletAddress
-    const targetWallet = target.network === 'megaeth' ? target.wallet.toLowerCase() : target.wallet
-    const cleanNote = note.trim().replace(/\s+/g, ' ')
-    const duration = target.action === 'timeout' ? durationMinutes : 0
-    const timestamp = Date.now()
-    const moderationMessage = `Testnet Games moderation\nAction: ${target.action}\nModerator: ${moderatorNetwork}:${moderator}\nTarget: ${target.network}:${targetWallet}\nDuration minutes: ${duration}\nNote: ${cleanNote}\nTimestamp: ${timestamp}`
-    let signature: string
-    if (isMegaEth) {
-      const provider = getMetaMaskProvider()
-      if (!provider) throw new Error('MetaMask is unavailable.')
-      signature = await provider.request<string>({ method: 'personal_sign', params: [moderationMessage, walletAddress] })
-    } else if (localWallet) signature = bs58.encode(ed25519.sign(new TextEncoder().encode(moderationMessage), localWallet.secretKey.slice(0, 32)))
-    else {
-      if (!external.signMessage) throw new Error('This wallet does not support message signing.')
-      signature = bs58.encode(await external.signMessage(new TextEncoder().encode(moderationMessage)))
+    try {
+      if (!walletAddress) throw new Error('Connect a moderator wallet first.')
+      const moderatorNetwork = isMegaEth ? 'megaeth' : 'solana'
+      const moderator = isMegaEth ? walletAddress.toLowerCase() : walletAddress
+      const targetWallet = target.network === 'megaeth' ? target.wallet.toLowerCase() : target.wallet
+      const cleanNote = note.trim().replace(/\s+/g, ' ')
+      const duration = target.action === 'timeout' ? durationMinutes : 0
+      const timestamp = Date.now()
+      const moderationMessage = `Testnet Games moderation\nAction: ${target.action}\nModerator: ${moderatorNetwork}:${moderator}\nTarget: ${target.network}:${targetWallet}\nDuration minutes: ${duration}\nNote: ${cleanNote}\nTimestamp: ${timestamp}`
+      let signature: string
+      if (isMegaEth) {
+        const provider = getMetaMaskProvider()
+        if (!provider) throw new Error('MetaMask is unavailable.')
+        signature = await provider.request<string>({ method: 'personal_sign', params: [moderationMessage, walletAddress] })
+      } else if (localWallet) signature = bs58.encode(ed25519.sign(new TextEncoder().encode(moderationMessage), localWallet.secretKey.slice(0, 32)))
+      else {
+        if (!external.signMessage) throw new Error('This wallet does not support message signing.')
+        signature = bs58.encode(await external.signMessage(new TextEncoder().encode(moderationMessage)))
+      }
+      const response = await fetch('/api/moderation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: target.action, moderatorNetwork, moderator, targetNetwork: target.network, target: targetWallet, durationMinutes: duration, note: cleanNote, timestamp, signature }) })
+      const responseText = await response.text()
+      let body: { message?: string } = {}
+      try { body = responseText ? JSON.parse(responseText) as { message?: string } : {} } catch { /* A deployment error may return HTML instead of JSON. */ }
+      if (!response.ok) throw new Error(body.message ?? `Moderation action failed (${response.status}).`)
+      const successMessage = target.action === 'timeout' ? `${target.name} timed out for ${duration} minute${duration === 1 ? '' : 's'}.` : `Warning sent to ${target.name}.`
+      setMessage(successMessage)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Moderation action failed.'
+      showSideAlert('Error', detail, 'error')
+      throw error
     }
-    const response = await fetch('/api/moderation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: target.action, moderatorNetwork, moderator, targetNetwork: target.network, target: targetWallet, durationMinutes: duration, note: cleanNote, timestamp, signature }) })
-    const body = await response.json() as { message?: string }
-    if (!response.ok) throw new Error(body.message ?? 'Moderation action failed.')
-    setMessage(target.action === 'timeout' ? `${target.name} timed out for ${duration} minute${duration === 1 ? '' : 's'}.` : `Warning sent to ${target.name}.`)
   }
 
   const claimReward = async (action: 'daily-case' | 'cashback', caseCommitment?: string) => {
