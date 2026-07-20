@@ -40,6 +40,7 @@ const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
 type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
 type ProfileSection = 'statistics' | 'transactions' | 'settings'
+type SideAlert = { id: string; title: string; message: string; tone: 'error' | 'warning' | 'success' }
 const NOTIFICATIONS_CACHE_KEY = 'testnet-games:notifications:v1'
 
 function App() {
@@ -78,6 +79,8 @@ function App() {
   })
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [sideAlerts, setSideAlerts] = useState<SideAlert[]>([])
+  const alertedNotificationIds = useRef(new Set<string>())
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -91,6 +94,11 @@ function App() {
     && walletUsdValue !== null && walletUsdValue > MIN_WALLET_USD
   const connectionType = isMegaEth ? 'MetaMask' : localWallet ? 'Site wallet' : external.wallet?.adapter.name ?? 'External wallet'
   const unreadNotifications = notifications.filter(notification => !notification.read).length
+  const showSideAlert = useCallback((title: string, alertMessage: string, tone: SideAlert['tone']) => {
+    const id = `${Date.now()}-${crypto.randomUUID()}`
+    setSideAlerts(current => [...current, { id, title, message: alertMessage, tone }].slice(-5))
+    window.setTimeout(() => setSideAlerts(current => current.filter(alert => alert.id !== id)), 7_000)
+  }, [])
 
   useEffect(() => { try { localStorage.setItem(NOTIFICATIONS_CACHE_KEY, JSON.stringify(notifications.slice(0, 30))) } catch { /* Notifications are optional browser state. */ } }, [notifications])
   const addReplyNotification = useCallback((notification: ReplyNotification) => {
@@ -106,6 +114,12 @@ function App() {
         const body = await response.json() as { notifications?: { id: string; title: string; message: string; receivedAt: number; read?: boolean }[] }
         if (!active || !response.ok || !Array.isArray(body.notifications)) return
         const serverNotifications = body.notifications
+        serverNotifications.forEach(notification => {
+          if ((notification.title === 'Warning received' || /timed out/i.test(notification.title)) && !alertedNotificationIds.current.has(notification.id)) {
+            alertedNotificationIds.current.add(notification.id)
+            showSideAlert(notification.title, notification.message, 'warning')
+          }
+        })
         setNotifications(current => {
           const incoming = serverNotifications.map(notification => ({ id: notification.id, senderName: notification.title, message: notification.message, wallet: walletAddress, network, receivedAt: notification.receivedAt, read: Boolean(notification.read), kind: 'moderation' as const }))
           return [...incoming, ...current.filter(item => !incoming.some(notification => notification.id === item.id))].slice(0, 30)
@@ -115,7 +129,7 @@ function App() {
     void loadModerationNotifications()
     const interval = window.setInterval(() => void loadModerationNotifications(), 20_000)
     return () => { active = false; window.clearInterval(interval) }
-  }, [isMegaEth, walletAddress])
+  }, [isMegaEth, showSideAlert, walletAddress])
 
   useEffect(() => {
     if (localStorage.getItem('testnet-games:last-wallet') !== 'metamask') return
@@ -450,10 +464,12 @@ function App() {
     if (accessScreen) window.scrollTo({ top: 0, left: 0 })
   }, [accessScreen, walletAddress])
 
+  const messageTone: SideAlert['tone'] = /could not|error|failed|unavailable|invalid|not installed|select a wallet|rate.?limit|too many|unable/i.test(message) ? 'error' : /warning|timed out/i.test(message) ? 'warning' : 'success'
+
   return <div className={`shell ${accessScreen ? 'access-shell' : ''} ${chatCollapsed ? 'chat-collapsed' : ''}`}>
     <header>
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setShowRewards(false); setShowDinoTokens(false); setInGame(connected); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
-      {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><RewardsPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onClaim={claimReward} onOpenLeaderboard={() => { setShowDinoTokens(true); setShowProfile(false); setShowAffiliates(false); setInGame(false) }} /><div className="header-notifications"><button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>{notificationsOpen && <div className="header-notification-menu"><header><strong>Notifications</strong>{unreadNotifications > 0 && <button type="button" onClick={() => setNotifications(current => current.map(notification => ({ ...notification, read: true })))}>Mark read</button>}</header>{notifications.length ? <div>{notifications.map(notification => <button type="button" key={notification.id} className={notification.read ? '' : 'unread'} onClick={() => { setNotifications(current => current.map(item => item.id === notification.id ? { ...item, read: true } : item)); setNotificationsOpen(false); viewChatProfile(notification.wallet, notification.network) }}><Bell /><span><strong>{notification.kind === 'moderation' ? notification.senderName : `${notification.senderName} replied to your message`}</strong><small>{notification.message}</small></span></button>)}</div> : <p>No notifications</p>}</div>}</div><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
+      {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><RewardsPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onClaim={claimReward} onOpenLeaderboard={() => { setShowDinoTokens(true); setShowProfile(false); setShowAffiliates(false); setInGame(false) }} /><div className="header-notifications"><button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>{notificationsOpen && <div className="header-notification-menu"><header><strong>Notifications</strong><button type="button" disabled={!unreadNotifications} onClick={() => setNotifications(current => current.map(notification => ({ ...notification, read: true })))}>Mark as read</button></header>{notifications.length ? <div>{notifications.map(notification => <button type="button" key={notification.id} className={notification.read ? '' : 'unread'} onClick={() => { setNotifications(current => current.map(item => item.id === notification.id ? { ...item, read: true } : item)); setNotificationsOpen(false); viewChatProfile(notification.wallet, notification.network) }}><Bell /><span><strong>{notification.kind === 'moderation' ? notification.senderName : `${notification.senderName} replied to your message`}</strong><small>{notification.message}</small></span></button>)}</div> : <p>No notifications</p>}</div>}</div><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} collapsed={chatCollapsed} onToggleCollapsed={() => setChatCollapsed(current => !current)} />
 
@@ -526,7 +542,7 @@ function App() {
       onUnlocked={async wallet => { await activateSiteWallet(wallet); setModal(false) }}
     />}
     {tipTarget && connected && walletAddress && <TipModal sender={walletAddress} senderNetwork={isMegaEth ? 'megaeth' : 'solana'} target={tipTarget} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onClose={() => setTipTarget(null)} onSuccess={(tipMessage, amount) => { setMessage(tipMessage); recordConfirmedSpend(amount) }} />}
-    {message && <div className="toast">{message}<button onClick={() => setMessage('')}><X /></button></div>}
+    <div className="side-alert-stack" aria-live="polite">{message && <div className={`side-alert ${messageTone}`}><span>{messageTone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{messageTone === 'error' ? 'Error' : messageTone === 'warning' ? 'Warning' : 'Success'}</strong><p>{message}</p></div><button onClick={() => setMessage('')} aria-label="Dismiss"><X /></button></div>}{sideAlerts.map(alert => <div className={`side-alert ${alert.tone}`} key={alert.id}><span>{alert.tone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{alert.title}</strong><p>{alert.message}</p></div><button onClick={() => setSideAlerts(current => current.filter(item => item.id !== alert.id))} aria-label="Dismiss"><X /></button></div>)}</div>
   </div>
 }
 

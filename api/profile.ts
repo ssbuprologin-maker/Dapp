@@ -15,6 +15,7 @@ const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
 const VERIFIED_WALLETS_KEY = 'testnet-games:verified-wallets:v1'
 const MODERATORS_KEY = 'testnet-games:moderators:v1'
+const notificationKey = (network: Network, wallet: string) => `testnet-games:notifications:${network}:${normalizedWallet(network, wallet)}`
 const USERNAME_OWNER_PREFIX = 'testnet-games:username-owner:v1:'
 const MICROSOL = 1_000_000
 const warningKey = (network: Network, wallet: string) => `testnet-games:moderation-warnings:${network}:${normalizedWallet(network, wallet)}`
@@ -240,6 +241,18 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const profile: Profile = { ...current, displayName, changedAt: Date.now() }
       await redis.set(key, profile)
       profileSaved = true
+      if (!current?.displayName) {
+        const welcome = {
+          id: `welcome-${network}-${normalizedWallet(network, wallet)}`,
+          type: 'welcome',
+          title: 'Welcome to DINOGAME',
+          message: 'Your player profile is ready. Play verified games, earn Dino Tokens, and climb the leaderboard.',
+          receivedAt: Date.now(),
+          read: false,
+        }
+        await redis.lpush(notificationKey(network, wallet), JSON.stringify(welcome))
+        await redis.ltrim(notificationKey(network, wallet), 0, 29)
+      }
       if (current?.displayName && normalizedUsername(current.displayName) !== normalizedUsername(displayName)) {
         const previousKey = usernameOwnerKey(current.displayName)
         if (await redis.get<string>(previousKey) === owner) await redis.del(previousKey)

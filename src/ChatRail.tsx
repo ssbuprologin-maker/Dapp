@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import Ably from 'ably'
-import { BadgeCheck, Info, MessageCircle, Reply, Send, ShieldAlert, X } from 'lucide-react'
+import { BadgeCheck, Info, MessageCircle, Reply, Send, ShieldAlert, ShieldCheck, UserRound, VolumeX, X } from 'lucide-react'
 import { chatLevelTier } from './leveling'
 import type { TipTarget } from './TipModal'
 
@@ -12,6 +12,7 @@ type ModerationAction = 'warn' | 'timeout'
 export type ModerationTarget = { wallet: string; network: Network; name: string; action: ModerationAction }
 const CHANNEL = 'testnet-games-global-chat'
 const CHAT_CACHE_KEY = 'testnet-games:chat-cache:v1'
+const mutedCacheKey = (network: Network, wallet: string | null) => `testnet-games:muted-chat:v1:${network}:${wallet ?? 'guest'}`
 
 function normalizeChatMessage(data: Partial<ChatMessage>, network: Network, wallet: string): ChatMessage | null {
   if (typeof data.id !== 'string' || typeof data.message !== 'string' || typeof data.sentAt !== 'number') return null
@@ -61,6 +62,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const [moderatorProfiles, setModeratorProfiles] = useState<Record<string, boolean>>({})
   const [profileNames, setProfileNames] = useState<Record<string, string>>({})
   const [selectedPlayer, setSelectedPlayer] = useState('')
+  const [mutedPlayers, setMutedPlayers] = useState<string[]>([])
   const [replyingTo, setReplyingTo] = useState<ReplyPreview | null>(null)
   const [showRules, setShowRules] = useState(false)
   const [moderationTarget, setModerationTarget] = useState<ModerationTarget | null>(null)
@@ -79,6 +81,12 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const ownMessageIds = useRef(new Set<string>())
   const canChat = Boolean(wallet && gamesPlayed >= 3)
   const remainingCharacters = Math.max(0, 140 - draft.length)
+
+  useEffect(() => {
+    try { setMutedPlayers(JSON.parse(localStorage.getItem(mutedCacheKey(network, wallet)) ?? '[]') as string[]) } catch { setMutedPlayers([]) }
+  }, [network, wallet])
+  useEffect(() => { try { localStorage.setItem(mutedCacheKey(network, wallet), JSON.stringify(mutedPlayers)) } catch { /* Local mute state is optional. */ } }, [mutedPlayers, network, wallet])
+  useEffect(() => { const closeMenu = () => setSelectedPlayer(''); document.addEventListener('click', closeMenu); return () => document.removeEventListener('click', closeMenu) }, [])
 
   useEffect(() => {
     if (!wallet) { setGamesPlayed(0); return }
@@ -229,7 +237,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     <button type="button" className="chat-rail-toggle" onClick={onToggleCollapsed} aria-label={collapsed ? 'Open game chat' : 'Close game chat'} aria-expanded={!collapsed}><MessageCircle /></button>
     <div className="chat-rail-content">
     <div className="chat-title"><MessageCircle /><strong>GAME CHAT</strong><span className="online-count"><i />{onlineCount}</span></div>
-    <div className="chat-feed" ref={feed}>{messages.length ? messages.map(item => {
+    <div className="chat-feed" ref={feed}>{messages.filter(item => !item.wallet || !mutedPlayers.includes(`${item.network}:${item.wallet}`)).length ? messages.filter(item => !item.wallet || !mutedPlayers.includes(`${item.network}:${item.wallet}`)).map(item => {
       const isOwn = Boolean(wallet && item.wallet === (network === 'megaeth' ? wallet.toLowerCase() : wallet) && item.network === network)
       const profileKey = item.wallet ? `${item.network}:${item.wallet}` : ''
       const avatar = isOwn && ownAvatar ? ownAvatar : profileKey ? avatars[profileKey] : ''
@@ -237,12 +245,15 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const verified = Boolean(verifiedProfiles[profileKey])
       const moderator = Boolean(moderatorProfiles[profileKey])
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
-      return <article key={item.id} onClick={() => setSelectedPlayer(current => current === item.id ? '' : item.id)}>
+      return <article key={item.id}>
         <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="This player is a moderator" aria-label="This player is a moderator"><Info /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p onClick={event => { event.stopPropagation(); setSelectedPlayer(item.id) }}>{item.message}</p></div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
         {selectedPlayer === item.id && item.wallet && (
           <div className="chat-user-menu" onClick={event => event.stopPropagation()}>
+            <div>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}<strong>{name}</strong><b>{level}</b></div>
+            <button type="button" onClick={() => { onViewProfile(item.wallet!, item.network); setSelectedPlayer('') }}><UserRound /> Check profile</button>
+            <button type="button" onClick={() => { setMutedPlayers(current => current.includes(`${item.network}:${item.wallet}`) ? current : [...current, `${item.network}:${item.wallet}`]); setSelectedPlayer('') }}><VolumeX /> Mute locally</button>
             <button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: item.message }); setSelectedPlayer('') }}><Reply /> Reply</button>
           </div>
         )}
