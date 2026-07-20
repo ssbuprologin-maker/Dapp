@@ -40,7 +40,7 @@ const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
 type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
 type ProfileSection = 'statistics' | 'transactions' | 'settings'
-type SideAlert = { id: string; title: string; message: string; tone: 'error' | 'warning' | 'success' }
+type SideAlert = { id: string; title: string; message: string; tone: 'error' | 'warning' | 'success'; closing?: boolean }
 const NOTIFICATIONS_CACHE_KEY = 'testnet-games:notifications:v1'
 
 function App() {
@@ -80,6 +80,7 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [sideAlerts, setSideAlerts] = useState<SideAlert[]>([])
+  const [messageClosing, setMessageClosing] = useState(false)
   const alertedNotificationIds = useRef(new Set<string>())
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
@@ -97,8 +98,25 @@ function App() {
   const showSideAlert = useCallback((title: string, alertMessage: string, tone: SideAlert['tone']) => {
     const id = `${Date.now()}-${crypto.randomUUID()}`
     setSideAlerts(current => [...current, { id, title, message: alertMessage, tone }].slice(-5))
-    window.setTimeout(() => setSideAlerts(current => current.filter(alert => alert.id !== id)), 7_000)
+    window.setTimeout(() => setSideAlerts(current => current.map(alert => alert.id === id ? { ...alert, closing: true } : alert)), 6_500)
+    window.setTimeout(() => setSideAlerts(current => current.filter(alert => alert.id !== id)), 6_820)
   }, [])
+  const dismissSideAlert = useCallback((id: string) => {
+    setSideAlerts(current => current.map(alert => alert.id === id ? { ...alert, closing: true } : alert))
+    window.setTimeout(() => setSideAlerts(current => current.filter(alert => alert.id !== id)), 320)
+  }, [])
+
+  useEffect(() => {
+    if (!message) { setMessageClosing(false); return }
+    setMessageClosing(false)
+    const beginClose = window.setTimeout(() => setMessageClosing(true), 6_500)
+    const remove = window.setTimeout(() => setMessage(''), 6_820)
+    return () => { window.clearTimeout(beginClose); window.clearTimeout(remove) }
+  }, [message])
+  const dismissMessage = () => {
+    setMessageClosing(true)
+    window.setTimeout(() => setMessage(''), 320)
+  }
 
   useEffect(() => { try { localStorage.setItem(NOTIFICATIONS_CACHE_KEY, JSON.stringify(notifications.slice(0, 30))) } catch { /* Notifications are optional browser state. */ } }, [notifications])
   const addReplyNotification = useCallback((notification: ReplyNotification) => {
@@ -551,7 +569,7 @@ function App() {
       onUnlocked={async wallet => { await activateSiteWallet(wallet); setModal(false) }}
     />}
     {tipTarget && connected && walletAddress && <TipModal sender={walletAddress} senderNetwork={isMegaEth ? 'megaeth' : 'solana'} target={tipTarget} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onClose={() => setTipTarget(null)} onSuccess={(tipMessage, amount) => { setMessage(tipMessage); recordConfirmedSpend(amount) }} />}
-    <div className="side-alert-stack" aria-live="polite">{message && <div className={`side-alert ${messageTone}`}><span>{messageTone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{messageTone === 'error' ? 'Error' : messageTone === 'warning' ? 'Warning' : 'Success'}</strong><p>{message}</p></div><button onClick={() => setMessage('')} aria-label="Dismiss"><X /></button></div>}{sideAlerts.map(alert => <div className={`side-alert ${alert.tone}`} key={alert.id}><span>{alert.tone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{alert.title}</strong><p>{alert.message}</p></div><button onClick={() => setSideAlerts(current => current.filter(item => item.id !== alert.id))} aria-label="Dismiss"><X /></button></div>)}</div>
+    <div className="side-alert-stack" aria-live="polite">{message && <div className={`side-alert ${messageTone}${messageClosing ? ' is-closing' : ''}`}><span>{messageTone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{messageTone === 'error' ? 'Error' : messageTone === 'warning' ? 'Warning' : 'Success'}</strong><p>{message}</p></div><button onClick={dismissMessage} aria-label="Dismiss"><X /></button></div>}{sideAlerts.map(alert => <div className={`side-alert ${alert.tone}${alert.closing ? ' is-closing' : ''}`} key={alert.id}><span>{alert.tone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{alert.title}</strong><p>{alert.message}</p></div><button onClick={() => dismissSideAlert(alert.id)} aria-label="Dismiss"><X /></button></div>)}</div>
   </div>
 }
 

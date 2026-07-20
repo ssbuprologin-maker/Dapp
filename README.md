@@ -12,7 +12,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - The design language is the dark neon `DINOGAME` interface. Preserve the compact header, fixed left chat rail, teal/purple accents, wallet balance selector, and 3D coin assets unless the user explicitly requests a redesign.
 - A wallet must have more than `$8` of supported current testnet value and a saved worldwide username before it can enter the game. Returning named wallets must go straight to the game rather than the Access Granted screen.
 - The user has requested iterative visual changes frequently. Preserve existing unrelated changes in this dirty worktree; do not reset or replace whole files unnecessarily.
-- Build marker at handoff: `DUAL TESTNET BOT RACE - BUILD V47`.
+- Build marker at handoff: `DUAL TESTNET BOT RACE - BUILD V52`.
 
 ### Non-negotiable chat behavior
 
@@ -22,11 +22,11 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - The UI merges Redis history, Ably history, browser cache, and live messages by message ID, sorts by timestamp, and displays at most 30 messages.
 - Messages are limited at three layers: textarea `maxLength={140}`, UI state truncation, and server/history normalization. The chat footer displays remaining characters (`140` down to `0`), not characters used. Keep ordinary spaces working in chat messages.
 - The game listens for Space/ArrowUp to jump, but its global keyboard handler must ignore focused inputs, textareas, selects, and content-editable elements. Otherwise it blocks spaces while chat is focused.
-- Clicking a chat message opens Reply, View profile, and Tip player. Clicking an avatar opens that profile immediately. Reply data is a short sanitized quote.
-- Header notifications are browser-local for now. A live reply to one of the current wallet's messages creates an unread reply notification. Clicking it marks it read and opens the sender's profile. Keep this notification list extensible for future types.
-- Moderator tags are backed by Redis role membership. Moderators can sign warnings and 1-minute to 7-day chat timeouts from a chat message's action menu. A timeout removes Ably publish permission at the next short-lived token renewal; it does not prevent reading chat.
+- Clicking the message text opens Check profile, Mute locally, and Reply in a foreground action menu. Clicking a name or avatar goes directly to that profile. Tipping and moderator actions live on player profiles. Reply data is a short sanitized quote.
+- Reply notifications are cached in the browser. Moderation warnings, timeouts, and the first-profile welcome notification are durable Redis records under `testnet-games:notifications:<network>:<wallet>`. The client polls moderation notifications every 5 seconds, merges them by ID, and shows new warnings/timeouts both in the bell menu and as right-side warning alerts.
+- Moderator tags are backed by Redis role membership. The compact chat marker is a shield/info indicator; the profile heading carries the larger MOD badge. Moderators sign warnings and 1-minute to 7-day chat timeouts from player profiles. Mods cannot timeout other mods. A timeout removes Ably publish permission at the next short-lived token renewal; it does not prevent reading chat.
 - Tag policy is enforced by `/api/profile`: a player may have one role tag, or Verified plus one role tag. Verified is the only tag that can be paired with another tag; profile/chat consumers use the server-approved tag list.
-- Rewards live in the header hover menu rather than a separate page. Dino Tokens (DT) are a non-transferable ledger for now: verified wagers earn 64 DT per SOL-equivalent wager, Daily Cases add recorded rewards, and the future token-claim system can build on this balance. Cashback is calculated at 0.2% of verified wagers and its claim is recorded in the rewards ledger; it does not send a wallet transaction yet.
+- Rewards live in the header hover menu rather than a separate rewards page. The Dino Token leaderboard is a full page. DT are a non-transferable ledger for now: verified wagers earn 1 DT per USD wagered, Daily Cases add recorded rewards, and a future token-claim system can build on this balance. Cashback is calculated at 0.2% of verified wagers and its claim is recorded in the rewards ledger; it does not send a wallet transaction yet.
 - Chat rules controls intentionally open an empty placeholder modal. Do not invent rules/content until asked.
 
 ### Critical source map
@@ -38,7 +38,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | `src/ChatRail.tsx` | Ably realtime client, Redis/browser history loading, chat UI, reply/action menu, 140-character enforcement. |
 | `api/chat-token.ts` | Creates restricted Ably tokens. Publish access is granted only after three verified games and is withheld while a chat timeout is active. |
 | `api/chat-history.ts` | Redis-backed newest-30 global chat history. Keep this as TypeScript only. |
-| `api/moderation.ts` | Verifies signed moderator warnings and timeouts, then writes their Redis audit/timeout records. |
+| `api/moderation.ts` | Fetches durable notifications; verifies signed warnings/timeouts; writes Redis notification, audit, warning-count, and timeout records. |
 | `src/ProfilePage.tsx` / `api/profile.ts` | Worldwide profiles, unique usernames, avatars, levels, verified badge, settings. |
 | `src/TipModal.tsx` | Same-network non-custodial SOL/ETH tips. |
 | `src/HeaderBalance.tsx` | Compact selectable SOL/ETH/USDC header balance and conversion display. |
@@ -72,13 +72,13 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | `/api/leaderboard` | GET/POST | Worldwide scores and verified paid-entry recording. |
 | `/api/chat-token` | GET | Ably token for realtime chat. |
 | `/api/chat-history` | GET/POST | Durable newest 30 chat records. Requires Upstash. |
-| `/api/moderation` | POST | Signed moderator warning or chat-timeout action. |
+| `/api/moderation` | GET/POST | Fetch durable player notifications; create a signed moderator warning or chat-timeout action. |
 | `/api/rewards` | GET/POST | Dino Token balance/leaderboard plus signed Daily Case and cashback-ledger claims. |
 | `/api/payout` | POST | Solana devnet payout after a verified winning entry. |
 | `/api/prices` | GET | SOL/ETH/USDC price data. |
 | `/api/analytics` | POST | Anonymous application analytics. |
 
-Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:moderation-history:<network>:<wallet>`, and `testnet-games:chat-timeout:<network>:<wallet>`.
+Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:moderation-history:<network>:<wallet>`, `testnet-games:moderation-warnings:<network>:<wallet>`, `testnet-games:chat-timeout:<network>:<wallet>`, and `testnet-games:notifications:<network>:<wallet>`.
 
 ### Deployment and verification
 
