@@ -7,8 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "check:server": "tsc api/payout.ts api/leaderboard.ts api/profile.ts api/chat-token.ts api/chat-history.ts api/moderation.ts api/rewards.ts api/analytics.ts api/prices.ts api/wallet-eligibility.ts api/kick-status.ts --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck",
-    "preview": "vite preview",
-    "vercel:dev": "vercel dev"
+    "preview": "npm run build && wrangler dev",
+    "vercel:dev": "vercel dev",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "@noble/curves": "^1.9.7",
@@ -27,12 +28,14 @@
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.45.1",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vercel/node": "^5.3.24",
     "@vitejs/plugin-react": "^5.0.2",
     "typescript": "~5.6.3",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "wrangler": "^4.112.0"
   },
   "overrides": {
     "rpc-websockets": "9.3.8"
