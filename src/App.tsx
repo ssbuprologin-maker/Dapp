@@ -557,6 +557,11 @@ function App() {
     setSelectedNotificationId('')
   }
 
+  const ownNetwork = isMegaEth ? 'megaeth' : 'solana'
+  const viewingOwnProfile = Boolean(showProfile && walletAddress && viewedProfile
+    && viewedProfile.network === ownNetwork
+    && (ownNetwork === 'megaeth' ? viewedProfile.wallet.toLowerCase() === walletAddress.toLowerCase() : viewedProfile.wallet === walletAddress))
+
   return <div className={`shell ${accessScreen ? 'access-shell' : ''} ${chatCollapsed ? 'chat-collapsed' : ''}`}>
     <header>
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setShowRewards(false); setShowDinoTokens(false); setInGame(connected); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
@@ -584,6 +589,8 @@ function App() {
     <main>
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : !profileLoaded && walletAddress ? (
         <section className="returning-player-loading"><LoaderCircle className="spin" /><span>LOADING PLAYER</span><p>Opening your game…</p></section>
+      ) : viewingOwnProfile && walletAddress && viewedProfile ? (
+        <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
       ) : showDinoTokens && walletAddress ? (
         <DinoTokensPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onBack={() => { setShowDinoTokens(false); setInGame(true) }} />
       ) : showAffiliates && walletAddress ? (
@@ -624,7 +631,7 @@ function App() {
       )}
     </main>
 
-    {showProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
+    {showProfile && !viewingOwnProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={false} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
 
     <footer className="site-footer">
       <section className="site-footer-brand"><div><span className="site-footer-mark">D</span><strong>DINOGAME</strong></div><p>Testnet dinosaur racing on Solana and MegaETH. Play, compete, collect Dino Tokens, and build your profile.</p><small>TESTNET ONLY · NO REAL VALUE</small></section>
