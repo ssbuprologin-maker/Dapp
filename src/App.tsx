@@ -85,6 +85,7 @@ function App() {
   const alertedNotificationIds = useRef(new Set<string>())
   const notificationsClearedAt = useRef(0)
   const profileMenuCloseTimer = useRef<number | null>(null)
+  const notificationsRef = useRef<HTMLDivElement>(null)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -123,6 +124,16 @@ function App() {
     profileMenuCloseTimer.current = window.setTimeout(() => setProfileMenu(false), 160)
   }
   useEffect(() => () => { if (profileMenuCloseTimer.current !== null) window.clearTimeout(profileMenuCloseTimer.current) }, [])
+  useEffect(() => {
+    if (!notificationsOpen) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (notificationsRef.current?.contains(event.target as Node)) return
+      setNotificationsOpen(false)
+      setSelectedNotificationId('')
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick)
+  }, [notificationsOpen])
 
   useEffect(() => { try { localStorage.setItem(NOTIFICATIONS_CACHE_KEY, JSON.stringify(notifications.slice(0, 30))) } catch { /* Notifications are optional browser state. */ } }, [notifications])
   const addReplyNotification = useCallback((notification: ReplyNotification) => {
@@ -330,6 +341,32 @@ function App() {
       if (!response.ok) throw new Error(body.message ?? 'Could not save profile picture.')
       setHeaderAvatar(avatarUrl); setMessage(avatarUrl ? 'Profile picture saved worldwide.' : 'Profile picture removed.')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save profile picture.') }
+  }
+  const changeKickChannel = async (input: string) => {
+    if (!walletAddress) throw new Error('Connect your wallet first.')
+    const entered = input.trim()
+    const match = entered.match(/^(?:https?:\/\/)?(?:www\.)?kick\.com\/([a-z0-9_-]{2,32})\/?$/i)
+    const kickSlug = entered ? match?.[1]?.toLowerCase() ?? '' : ''
+    if (entered && !kickSlug) throw new Error('Use a channel link like https://kick.com/username.')
+    const network = isMegaEth ? 'megaeth' : 'solana'
+    const normalizedWallet = isMegaEth ? walletAddress.toLowerCase() : walletAddress
+    const timestamp = Date.now()
+    const messageToSign = `Testnet Games Kick channel change\nNetwork: ${network}\nWallet: ${normalizedWallet}\nKick channel: ${kickSlug || 'none'}\nTimestamp: ${timestamp}`
+    let signature: string
+    if (isMegaEth) {
+      const provider = getMetaMaskProvider()
+      if (!provider) throw new Error('MetaMask is unavailable.')
+      signature = await provider.request<string>({ method: 'personal_sign', params: [messageToSign, walletAddress] })
+    } else if (localWallet) signature = bs58.encode(ed25519.sign(new TextEncoder().encode(messageToSign), localWallet.secretKey.slice(0, 32)))
+    else {
+      if (!external.signMessage) throw new Error('This wallet does not support message signing.')
+      signature = bs58.encode(await external.signMessage(new TextEncoder().encode(messageToSign)))
+    }
+    const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'kick-channel', network, wallet: walletAddress, kickSlug, timestamp, signature }) })
+    const body = await response.json() as { kickUrl?: string; message?: string }
+    if (!response.ok) throw new Error(body.message ?? 'Could not save Kick channel.')
+    setMessage(kickSlug ? 'Kick channel saved.' : 'Kick channel removed.')
+    return body.kickUrl ?? ''
   }
   const chooseExternal = (name: WalletName, readyState: WalletReadyState) => {
     if (readyState !== WalletReadyState.Installed && readyState !== WalletReadyState.Loadable) {
@@ -565,7 +602,7 @@ function App() {
       {connected && walletAddress ? <div className="header-actions">
         <HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} />
         <RewardsPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onClaim={claimReward} onOpenLeaderboard={() => { setShowDinoTokens(true); setShowProfile(false); setShowAffiliates(false); setInGame(false) }} onHeaderHover={() => { setNotificationsOpen(false); setSelectedNotificationId('') }} />
-        <div className="header-notifications">
+        <div className="header-notifications" ref={notificationsRef}>
           <button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setSelectedNotificationId(''); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>
           {notificationsOpen && <div className="header-notification-menu">
             <header><strong>Notifications</strong><button type="button" disabled={!notifications.length} onClick={clearNotifications}>Clear</button></header>
@@ -587,7 +624,7 @@ function App() {
       {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : (!profileLoaded || walletActivity === 'checking' || walletActivity === 'idle') && walletAddress ? (
         <section className="returning-player-loading"><LoaderCircle className="spin" /><span>LOADING PLAYER</span><p>Opening your game…</p></section>
       ) : viewingOwnProfile && walletAddress && viewedProfile ? (
-        <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
+        <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
       ) : showDinoTokens && walletAddress ? (
         <DinoTokensPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onBack={() => { setShowDinoTokens(false); setInGame(true) }} />
       ) : showAffiliates && walletAddress ? (
@@ -602,7 +639,7 @@ function App() {
     {accessScreen && walletAddress && <SignupOverlay wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} saving={savingName} onSubmit={changeDisplayName} onDisconnect={() => void disconnect()} />}
     {activityBlocked && walletAddress && <WalletActivityOverlay network={isMegaEth ? 'megaeth' : 'solana'} error={walletActivity === 'error' ? walletActivityError : ''} onRetry={() => setWalletActivityRetry(current => current + 1)} onDisconnect={() => void disconnect()} />}
 
-    {showProfile && !viewingOwnProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={false} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
+    {showProfile && !viewingOwnProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={false} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
 
     <footer className="site-footer">
       <section className="site-footer-brand"><div><span className="site-footer-mark">D</span><strong>DINOGAME</strong></div><p>Testnet dinosaur racing on Solana and MegaETH. Play, compete, collect Dino Tokens, and build your profile.</p><small>TESTNET ONLY · NO REAL VALUE</small></section>

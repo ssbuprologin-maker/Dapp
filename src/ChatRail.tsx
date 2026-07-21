@@ -60,6 +60,9 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const [levels, setLevels] = useState<Record<string, number>>({})
   const [verifiedProfiles, setVerifiedProfiles] = useState<Record<string, boolean>>({})
   const [moderatorProfiles, setModeratorProfiles] = useState<Record<string, boolean>>({})
+  const [streamerProfiles, setStreamerProfiles] = useState<Record<string, boolean>>({})
+  const [kickChannels, setKickChannels] = useState<Record<string, string>>({})
+  const [liveKickChannels, setLiveKickChannels] = useState<Record<string, boolean>>({})
   const [profileNames, setProfileNames] = useState<Record<string, string>>({})
   const [selectedPlayer, setSelectedPlayer] = useState('')
   const [playerMenuPosition, setPlayerMenuPosition] = useState({ left: 8, top: 8 })
@@ -86,7 +89,13 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const deletedMessageIds = useRef(new Set<string>())
   const canChat = Boolean(wallet && gamesPlayed >= 3)
   const remainingCharacters = Math.max(0, 140 - draft.length)
-  const reportError = (detail: string) => { setError(detail); onError(detail) }
+  const reportError = (detail: string) => {
+    // Ably emits this while an old client is intentionally closing during
+    // startup, wallet connection, and account changes. It is not a user error.
+    if (/^connection closed[.!]?$/i.test(detail.trim())) return
+    setError(detail)
+    onError(detail)
+  }
 
   useEffect(() => {
     try { setMutedPlayers(JSON.parse(localStorage.getItem(mutedCacheKey(network, wallet)) ?? '[]') as string[]) } catch { setMutedPlayers([]) }
@@ -193,7 +202,10 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       if (active) setMessages(current => keepNewest30([...current, ...historical]))
       setError('')
     }).catch(reason => reportError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
-    client.connection.on('failed', state => reportError(state.reason?.message ?? 'Live chat connection failed.'))
+    client.connection.on('failed', state => {
+      if (!active) return
+      reportError(state.reason?.message ?? 'Live chat connection failed.')
+    })
     return () => { active = false; void channel.unsubscribe('total-bets', receiveTotalBets); channelRef.current = null; if (clientRef.current === client) clientRef.current = null; void channel.presence.leave(); client.close() }
   }, [canChat, network, onReplyNotification, wallet])
 
@@ -228,17 +240,32 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       if (requestedAvatars.current.has(key)) continue
       requestedAvatars.current.add(key)
       void fetch(`/api/profile?network=${item.network}&wallet=${encodeURIComponent(item.wallet)}`)
-        .then(response => response.ok ? response.json() as Promise<{ displayName?: string; avatarUrl?: string; level?: number; verified?: boolean; moderator?: boolean }> : Promise.reject())
+        .then(response => response.ok ? response.json() as Promise<{ displayName?: string; avatarUrl?: string; level?: number; verified?: boolean; moderator?: boolean; streamer?: boolean; kickSlug?: string }> : Promise.reject())
         .then(profile => {
           if (profile.avatarUrl) setAvatars(current => ({ ...current, [key]: profile.avatarUrl! }))
           if (profile.displayName) setProfileNames(current => ({ ...current, [key]: profile.displayName! }))
           setLevels(current => ({ ...current, [key]: Number(profile.level ?? 1) }))
           setVerifiedProfiles(current => ({ ...current, [key]: Boolean(profile.verified) }))
           setModeratorProfiles(current => ({ ...current, [key]: Boolean(profile.moderator) }))
+          setStreamerProfiles(current => ({ ...current, [key]: Boolean(profile.streamer) }))
+          if (profile.kickSlug) setKickChannels(current => ({ ...current, [key]: profile.kickSlug! }))
         })
         .catch(() => undefined)
     }
   }, [messages])
+
+  useEffect(() => {
+    const slugs = [...new Set(Object.values(kickChannels).filter(Boolean))]
+    if (!slugs.length) { setLiveKickChannels({}); return }
+    let cancelled = false
+    const checkLive = () => void fetch(`/api/kick-status?channels=${encodeURIComponent(slugs.join(','))}`)
+      .then(response => response.ok ? response.json() as Promise<{ channels?: Record<string, boolean> }> : Promise.reject())
+      .then(result => { if (!cancelled) setLiveKickChannels(result.channels ?? {}) })
+      .catch(() => undefined)
+    checkLive()
+    const timer = window.setInterval(checkLive, 45_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [kickChannels])
 
   const send = async (event: FormEvent) => {
     event.preventDefault()
@@ -307,10 +334,13 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const level = levels[profileKey] ?? 1
       const verified = Boolean(verifiedProfiles[profileKey])
       const moderator = Boolean(moderatorProfiles[profileKey])
+      const streamer = Boolean(streamerProfiles[profileKey])
+      const kickSlug = kickChannels[profileKey] ?? ''
+      const streamerLive = Boolean(kickSlug && liveKickChannels[kickSlug])
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
       return <article key={item.id} onClick={event => { if (!item.wallet || (event.target as HTMLElement).closest('button,.chat-user-menu')) return; event.stopPropagation(); openPlayerMenu(item.id, event.clientY, event.currentTarget.getBoundingClientRect()) }}>
-        <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
+        <button className={`chat-avatar${streamerLive ? ' streamer-live' : ''}`} onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={streamerLive ? `${name} is live on Kick` : item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}{streamer && <span className="chat-streamer-info" data-tooltip="Streamer" aria-label="Streamer"><img src="/streamer-logo.svg" alt="" /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
         {selectedPlayer === item.id && item.wallet && (
           <div key={playerMenuSequence} className="chat-user-menu" style={{ '--chat-menu-left': `${playerMenuPosition.left}px`, '--chat-menu-top': `${playerMenuPosition.top}px` } as CSSProperties} onClick={event => event.stopPropagation()}>

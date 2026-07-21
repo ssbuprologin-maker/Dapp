@@ -26,7 +26,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - The game listens for Space/ArrowUp to jump, but its global keyboard handler must ignore focused inputs, textareas, selects, and content-editable elements. Otherwise it blocks spaces while chat is focused.
 - Clicking the message text opens Check profile, Mute locally, and Reply in a foreground action menu. Clicking a name or avatar goes directly to that profile. Tipping and moderator actions live on player profiles. Reply data is a short sanitized quote.
 - Reply notifications are cached in the browser. Moderation warnings, timeouts, and the first-profile welcome notification are durable Redis records under `testnet-games:notifications:<network>:<wallet>`. The client polls moderation notifications every 5 seconds, merges them by ID, and shows new warnings/timeouts both in the bell menu and as right-side warning alerts.
-- Moderator tags are backed by Redis role membership. The compact chat marker is a shield/info indicator; the profile heading carries the larger MOD badge. Moderators sign warnings and 1-minute to 7-day chat timeouts from player profiles. Mods cannot timeout other mods. A timeout removes Ably publish permission at the next short-lived token renewal; it does not prevent reading chat. Moderators can also delete a chat message from its text-action menu; every deletion requires a fresh wallet signature.
+- Moderator and streamer tags are backed by Redis role membership. Chat uses compact role icons and profile headings use the larger role badges. Moderators sign warnings and 1-minute to 7-day chat timeouts from player profiles. Mods cannot timeout other mods. A timeout removes Ably publish permission at the next short-lived token renewal; it does not prevent reading chat. Moderators can also delete a chat message from its text-action menu; every deletion requires a fresh wallet signature.
 - Tag policy is enforced by `/api/profile`: a player may have one role tag, or Verified plus one role tag. Verified is the only tag that can be paired with another tag; profile/chat consumers use the server-approved tag list.
 - Rewards live in the header hover menu rather than a separate rewards page. The Dino Token leaderboard is a full page. DT are a non-transferable ledger for now: verified wagers earn 1 DT per USD wagered, Daily Cases add recorded rewards, and a future token-claim system can build on this balance. Cashback is calculated at 0.2% of verified wagers and its claim is recorded in the rewards ledger; it does not send a wallet transaction yet.
 - Chat rules controls intentionally open an empty placeholder modal. Do not invent rules/content until asked.
@@ -82,7 +82,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | `/api/prices` | GET | SOL/ETH/USDC price data. |
 | `/api/analytics` | POST | Anonymous application analytics. |
 
-Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:verified-bets:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:chat-deleted:v1`, `testnet-games:moderation-history:<network>:<wallet>`, `testnet-games:moderation-warnings:<network>:<wallet>`, `testnet-games:chat-timeout:<network>:<wallet>`, and `testnet-games:notifications:<network>:<wallet>`.
+Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:streamers:v1`, `testnet-games:kick-channels:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:verified-bets:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:chat-deleted:v1`, `testnet-games:moderation-history:<network>:<wallet>`, `testnet-games:moderation-warnings:<network>:<wallet>`, `testnet-games:chat-timeout:<network>:<wallet>`, and `testnet-games:notifications:<network>:<wallet>`.
 
 ### Deployment and verification
 
@@ -248,6 +248,26 @@ SADD testnet-games:moderators:v1 "solana:Base58WalletAddress"
 Reload after adding the role. The player receives a purple `MOD` tag in chat and on the profile heading. Clicking any other user's chat message then exposes **Warn user** and **Timeout** actions. Every action requires the moderator wallet to sign an exact request; the server rejects users that are not in this Redis set.
 
 Warnings require a reason and are kept in `testnet-games:moderation-history:<network>:<wallet>` (newest 50). Timeouts require a reason and duration of 1 minute through 7 days, write the same audit record, and set an expiring key at `testnet-games:chat-timeout:<network>:<wallet>`. Do not manually delete an active timeout key unless you intend to end it early.
+
+### Assigning a streamer role
+
+Streamer roles are wallet-backed. Add the normalized wallet in the Upstash CLI:
+
+```text
+SADD testnet-games:streamers:v1 "megaeth:0xlowercase_wallet_address"
+SADD testnet-games:streamers:v1 "solana:Base58WalletAddress"
+```
+
+The server allows Verified plus one role. Moderator has priority over Streamer if a wallet is accidentally added to both role sets, so remove the moderator membership when Streamer should be displayed instead.
+
+Streamer wallets temporarily receive a signed Kick channel field in Profile Settings. The normalized channel slug is stored in the `testnet-games:kick-channels:v1` Redis hash. Chat batches assigned channels through `/api/kick-status`, refreshes their public live state every 45 seconds, and draws an animated blue LIVE ring around active streamer avatars. To assign or replace a channel manually:
+
+```text
+HSET testnet-games:kick-channels:v1 "megaeth:0xlowercase_wallet_address" "kick_channel_slug"
+HSET testnet-games:kick-channels:v1 "solana:Base58WalletAddress" "kick_channel_slug"
+```
+
+Store only the final channel slug, not the full `https://kick.com/` URL. Remove it with `HDEL testnet-games:kick-channels:v1 "network:wallet"`.
 
 Average time on site is `session_seconds_total / sessions_measured`. The `unique-visitors` HyperLogLog stores only anonymous browser IDs; wallet addresses and transaction hashes are not stored in analytics. They are used separately by the payment-verified leaderboard.
 

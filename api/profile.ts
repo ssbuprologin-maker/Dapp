@@ -8,13 +8,15 @@ import { keccak_256 } from '@noble/hashes/sha3'
 import { sha256 } from '@noble/hashes/sha2'
 
 type Network = 'solana' | 'megaeth'
-type Profile = { displayName: string; changedAt: number; avatarUrl?: string; discordId?: string; referralCode?: string }
+type Profile = { displayName: string; changedAt: number; createdAt?: number; avatarUrl?: string; discordId?: string; referralCode?: string }
 type LeaderboardRecord = { score: number; playedAt: number; won: boolean; transaction: string; network: Network; walletAddress?: string }
 
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
 const VERIFIED_WALLETS_KEY = 'testnet-games:verified-wallets:v1'
 const MODERATORS_KEY = 'testnet-games:moderators:v1'
+const STREAMERS_KEY = 'testnet-games:streamers:v1'
+const KICK_CHANNELS_KEY = 'testnet-games:kick-channels:v1'
 const notificationKey = (network: Network, wallet: string) => `testnet-games:notifications:${network}:${normalizedWallet(network, wallet)}`
 const USERNAME_OWNER_PREFIX = 'testnet-games:username-owner:v1:'
 const MICROSOL = 1_000_000
@@ -112,6 +114,10 @@ function avatarChangeMessage(network: Network, wallet: string, avatar: string, t
   return `Testnet Games avatar change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nAvatar SHA-256: ${hash}\nTimestamp: ${timestamp}`
 }
 
+export function kickChannelChangeMessage(network: Network, wallet: string, kickSlug: string, timestamp: number) {
+  return `Testnet Games Kick channel change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nKick channel: ${kickSlug || 'none'}\nTimestamp: ${timestamp}`
+}
+
 function verifySignature(network: Network, wallet: string, message: string, signature: string) {
   if (network === 'solana') {
     if (!ed25519.verify(bs58.decode(signature), encoder.encode(message), new PublicKey(wallet).toBytes())) {
@@ -168,7 +174,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const token = process.env.UPSTASH_REDIS_REST_TOKEN!.trim()
       const rawRedis = new Redis({ url, token, automaticDeserialization: false })
       const normalized = normalizedWallet(network, wallet)
-      const [historyRows, leaderboardRows, progression, verified, moderator, warnings] = await Promise.all([
+      const [historyRows, leaderboardRows, progression, verified, moderator, streamer, warnings, kickSlug] = await Promise.all([
         rawRedis.zrange<string[]>(GAME_HISTORY_KEY, 0, 4_999, { rev: true }),
         // Include legacy games written before game history was separated from
         // personal-best leaderboard entries.
@@ -176,7 +182,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
         redis.hgetall<Record<string, string | number>>(playerStatsKey(network, wallet)),
         redis.sismember(VERIFIED_WALLETS_KEY, `${network}:${normalized}`),
         redis.sismember(MODERATORS_KEY, `${network}:${normalized}`),
+        redis.sismember(STREAMERS_KEY, `${network}:${normalized}`),
         redis.get(warningKey(network, normalized)),
+        redis.hget<string>(KICK_CHANNELS_KEY, `${network}:${normalized}`),
       ])
       const gamesByTransaction = new Map<string, LeaderboardRecord>()
       ;[...historyRows, ...leaderboardRows].forEach(row => {
@@ -192,9 +200,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const level = levelFromWager(wagerEquivalentSol)
       const currentLevelWager = requiredSolForLevel(level)
       const nextLevelWager = level >= 100 ? currentLevelWager : requiredSolForLevel(level + 1)
-      const tags = allowedPlayerTags([Boolean(verified) ? 'verified' : '', Boolean(moderator) ? 'moderator' : ''])
+      // Role order is also role priority. A moderator keeps the single role slot
+      // if a wallet is accidentally present in both role sets.
+      const tags = allowedPlayerTags([Boolean(verified) ? 'verified' : '', Boolean(moderator) ? 'moderator' : '', Boolean(streamer) ? 'streamer' : ''])
       return response.status(200).json({
-        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', referralCode: profile?.referralCode ?? '', tags, verified: tags.includes('verified'), moderator: tags.includes('moderator'), warningCount: Number(warnings ?? 0), discordConnected: Boolean(profile?.discordId),
+        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', referralCode: profile?.referralCode ?? '', createdAt: profile?.createdAt ?? (games.length ? Math.min(...games.map(game => game.playedAt)) : 0), tags, verified: tags.includes('verified'), moderator: tags.includes('moderator'), streamer: tags.includes('streamer'), kickSlug: typeof kickSlug === 'string' ? kickSlug : '', kickUrl: typeof kickSlug === 'string' && kickSlug ? `https://kick.com/${kickSlug}` : '', warningCount: Number(warnings ?? 0), discordConnected: Boolean(profile?.discordId),
         nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS,
         level, wagerEquivalentSol, wagerIntoLevelSol: level >= 100 ? 0 : wagerEquivalentSol - currentLevelWager,
         wagerForNextLevelSol: level >= 100 ? 0 : nextLevelWager - currentLevelWager,
@@ -206,6 +216,19 @@ export default async function handler(request: VercelRequest, response: VercelRe
       })
     }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
+    if (request.body?.action === 'kick-channel') {
+      const timestamp = Number(request.body?.timestamp)
+      const signature = typeof request.body?.signature === 'string' ? request.body.signature : ''
+      const kickSlug = typeof request.body?.kickSlug === 'string' ? request.body.kickSlug.trim().toLowerCase() : ''
+      if (kickSlug && !/^[a-z0-9_-]{2,32}$/.test(kickSlug)) throw new Error('Enter a valid kick.com channel link.')
+      if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 5 * 60_000) throw new Error('Kick channel request expired. Try again.')
+      const normalized = normalizedWallet(network, wallet)
+      if (!await redis.sismember(STREAMERS_KEY, `${network}:${normalized}`)) throw new Error('Only assigned Streamers can add a Kick channel.')
+      verifySignature(network, wallet, kickChannelChangeMessage(network, wallet, kickSlug, timestamp), signature)
+      if (kickSlug) await redis.hset(KICK_CHANNELS_KEY, { [`${network}:${normalized}`]: kickSlug })
+      else await redis.hdel(KICK_CHANNELS_KEY, `${network}:${normalized}`)
+      return response.status(200).json({ kickSlug, kickUrl: kickSlug ? `https://kick.com/${kickSlug}` : '' })
+    }
     if (request.body?.action === 'avatar') {
       const avatarUrl = typeof request.body?.avatarUrl === 'string' ? request.body.avatarUrl : ''
       const timestamp = Number(request.body?.timestamp)
@@ -214,7 +237,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 5 * 60_000) throw new Error('Avatar request expired. Try again.')
       verifySignature(network, wallet, avatarChangeMessage(network, wallet, avatarUrl, timestamp), signature)
       const current = await redis.get<Profile>(key)
-      await redis.set(key, { displayName: current?.displayName ?? '', changedAt: current?.changedAt ?? 0, discordId: current?.discordId, referralCode: current?.referralCode, avatarUrl })
+      await redis.set(key, { displayName: current?.displayName ?? '', changedAt: current?.changedAt ?? 0, createdAt: current?.createdAt, discordId: current?.discordId, referralCode: current?.referralCode, avatarUrl })
       return response.status(200).json({ avatarUrl })
     }
     const displayName = typeof request.body?.displayName === 'string' ? request.body.displayName.trim().replace(/\s+/g, ' ') : ''
@@ -241,7 +264,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
         if (claimed !== 'OK') throw new Error('Name can only be changed once every 10 minutes.')
       }
       const firstProfile = !current?.displayName
-      const profile: Profile = { ...current, displayName, changedAt: Date.now(), referralCode: firstProfile ? referralCode || undefined : current?.referralCode }
+      const profile: Profile = { ...current, displayName, changedAt: Date.now(), createdAt: current?.createdAt ?? Date.now(), referralCode: firstProfile ? referralCode || undefined : current?.referralCode }
       await redis.set(key, profile)
       profileSaved = true
       if (firstProfile) {
