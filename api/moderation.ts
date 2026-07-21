@@ -100,6 +100,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (action === 'warn') {
       warningCount = Number(await redis.incr(warningKey(targetNetwork, cleanTarget)))
       if (warningCount > 3) { effectiveAction = 'timeout'; effectiveDuration = 10; automatic = true }
+    } else {
+      // A manual timeout is one moderation strike and is shown alongside
+      // warnings in the moderator-only player view.
+      warningCount = Number(await redis.incr(warningKey(targetNetwork, cleanTarget)))
     }
     const record = { action: effectiveAction, requestedAction: action, moderator: `${moderatorNetwork}:${cleanModerator}`, target: `${targetNetwork}:${cleanTarget}`, note, durationMinutes: effectiveDuration, warningCount, automatic, createdAt }
     const auditKey = `testnet-games:moderation-history:${targetNetwork}:${cleanTarget}`
