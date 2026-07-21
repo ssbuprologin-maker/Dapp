@@ -74,6 +74,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const [moderationError, setModerationError] = useState('')
   const [gamesPlayed, setGamesPlayed] = useState(0)
   const [onlineCount, setOnlineCount] = useState(0)
+  const [totalBets, setTotalBets] = useState(0)
   const feed = useRef<HTMLDivElement>(null)
   const channelRef = useRef<Ably.RealtimeChannel | null>(null)
   const clientRef = useRef<Ably.Realtime | null>(null)
@@ -103,6 +104,22 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     const timer = window.setInterval(refresh, 15_000)
     return () => { active = false; window.clearInterval(timer) }
   }, [network, wallet])
+
+  useEffect(() => {
+    let active = true
+    const refresh = () => void fetch('/api/leaderboard')
+      .then(response => response.ok ? response.json() as Promise<{ totalBets?: number }> : Promise.reject())
+      .then(body => { if (active) setTotalBets(Math.max(0, Math.floor(Number(body.totalBets) || 0))) })
+      .catch(() => undefined)
+    refresh()
+    const timer = window.setInterval(refresh, 15_000)
+    window.addEventListener('testnet-games-bet-recorded', refresh)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      window.removeEventListener('testnet-games-bet-recorded', refresh)
+    }
+  }, [])
 
   useEffect(() => {
     const saved = cachedMessages()
@@ -295,6 +312,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
     {error && <div className="chat-error">{error}</div>}
     <form className="chat-compose" onSubmit={send}>{replyingTo && <div className="chat-reply-compose"><span>Replying to <strong>{replyingTo.name}</strong><small>{replyingTo.message}</small></span><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X /></button></div>}<textarea value={draft} onChange={event => setDraft(event.target.value.slice(0, 140))} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={140} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? '' : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div><div className="chat-compose-tools"><button type="button" onClick={() => setShowRules(true)}><Info /> Chat Rules</button><button type="button" onClick={() => setShowRules(true)} aria-label="Open chat rules and remaining characters"><MessageCircle /> <output aria-live="polite">{remainingCharacters}</output></button></div></form>
+    <div className="chat-total-bets" aria-label={`${totalBets.toLocaleString()} total bets`}><strong>{totalBets.toLocaleString()}</strong><span>Total Bets</span></div>
     {showRules && <div className="chat-rules-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowRules(false) }}><section className="chat-rules-modal" role="dialog" aria-modal="true" aria-labelledby="chat-rules-title"><button type="button" onClick={() => setShowRules(false)} aria-label="Close chat rules"><X /></button><Info /><h2 id="chat-rules-title">Chat Rules</h2><div className="chat-rules-placeholder" /></section></div>}
     {moderationTarget && (
       <div className="moderation-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !moderating) setModerationTarget(null) }}>

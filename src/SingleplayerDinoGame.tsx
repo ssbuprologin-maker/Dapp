@@ -71,10 +71,11 @@ async function worldwideLeaderboard(payload?: {
     body: JSON.stringify(payload),
   } : undefined)
   const text = await response.text()
-  let body: { scores?: ScoreRow[]; message?: string }
+  let body: { scores?: ScoreRow[]; totalBets?: number; message?: string }
   try { body = JSON.parse(text) as typeof body }
   catch { throw new Error(`Leaderboard service unavailable (${response.status}).`) }
   if (!response.ok) throw new Error(body.message ?? 'Worldwide leaderboard unavailable.')
+  if (payload) window.dispatchEvent(new Event('testnet-games-bet-recorded'))
   return Array.isArray(body.scores) ? body.scores : []
 }
 

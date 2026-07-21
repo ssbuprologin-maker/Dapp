@@ -4,6 +4,8 @@ import { Connection, PublicKey } from '@solana/web3.js'
 
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
+const TOTAL_BETS_KEY = 'testnet-games:verified-bets:v1'
+const TOTAL_BETS_MIGRATION_KEY = 'testnet-games:verified-bets-migrated:v1'
 const SOLANA_RECEIVER = '3aLAsDDF7JBhGGWdENyoFGP36PftRKpufHCN64myPLtN'
 const MEGAETH_RECEIVER = '0x4caf2b570acf0600810fec32373880fc8b94aa18'
 const SOLANA_ENTRY_LAMPORTS = 10_000_000
@@ -211,6 +213,31 @@ async function readLeaderboard(redis: Redis) {
   }))
 }
 
+async function readTotalBets(redis: Redis) {
+  // Backfill accepted entries that predate the global counter. The set makes
+  // this safe to retry and keeps one bet per verified transaction forever.
+  if (!await redis.get(TOTAL_BETS_MIGRATION_KEY)) {
+    const history = await redis.zrange<string[]>(GAME_HISTORY_KEY, 0, -1)
+    const entries = history.flatMap(member => {
+      try {
+        const record = JSON.parse(member) as LeaderboardRecord
+        return record.transaction && (record.network === 'solana' || record.network === 'megaeth')
+          ? [`${record.network}:${record.transaction.toLowerCase()}`]
+          : []
+      } catch { return [] }
+    })
+    const [firstEntry, ...remainingEntries] = entries
+    if (firstEntry) await redis.sadd(TOTAL_BETS_KEY, firstEntry, ...remainingEntries)
+    await redis.set(TOTAL_BETS_MIGRATION_KEY, '1', { nx: true })
+  }
+  return Number(await redis.scard(TOTAL_BETS_KEY))
+}
+
+async function leaderboardResponse(redis: Redis) {
+  const [scores, totalBets] = await Promise.all([readLeaderboard(redis), readTotalBets(redis)])
+  return { scores, totalBets }
+}
+
 function belongsToPlayer(record: LeaderboardRecord, network: Network, wallet: string) {
   if (record.network !== network) return false
   if (record.walletAddress) {
@@ -272,7 +299,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
   response.setHeader('Cache-Control', request.method === 'GET' ? 'public, max-age=10, s-maxage=10' : 'no-store')
   try {
     const redis = redisClient()
-    if (request.method === 'GET') return response.status(200).json({ scores: await readLeaderboard(redis) })
+    if (request.method === 'GET') return response.status(200).json(await leaderboardResponse(redis))
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
 
     const network = request.body?.network as Network
@@ -286,6 +313,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     if (network === 'solana') await verifySolanaEntry(wallet, transaction)
     else await verifyMegaEthEntry(wallet, transaction)
+
+    // A Redis set is the durable counter: the same on-chain payment can never
+    // increase Total Bets twice, even when a browser retries the request.
+    await redis.sadd(TOTAL_BETS_KEY, `${network}:${transaction.toLowerCase()}`)
 
     const usedKey = `testnet-games:leaderboard-entry:${network}:${transaction}`
     const claimed = await redis.set(usedKey, '1', { nx: true })
@@ -323,7 +354,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       if (!xpAwarded) await redis.del(usedKey)
       throw error
     }
-    return response.status(200).json({ scores: await readLeaderboard(redis) })
+    return response.status(200).json(await leaderboardResponse(redis))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Leaderboard request failed.'
     return response.status(/not configured/i.test(message) ? 503 : 400).json({ message })

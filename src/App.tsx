@@ -8,7 +8,7 @@ import { sha256 } from '@noble/hashes/sha2'
 import {
   AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Copy, Download, ExternalLink,
   Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
-  Settings, Share2, Trash2, Wallet, X,
+  Menu, Settings, Share2, Trash2, Wallet, X,
 } from 'lucide-react'
 import {
   createEncryptedWallet, exportRecovery, forgetStoredWallet, hasStoredWallet,
@@ -536,6 +536,14 @@ function App() {
   useEffect(() => {
     if (accessScreen) window.scrollTo({ top: 0, left: 0 })
   }, [accessScreen, walletAddress])
+  useEffect(() => {
+    if (!showProfile) return
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowProfile(false) }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', closeOnEscape) }
+  }, [showProfile])
 
   const messageTone: SideAlert['tone'] = /could not|error|failed|unavailable|invalid|not installed|select a wallet|rate.?limit|too many|unable/i.test(message) ? 'error' : /warning|timed out/i.test(message) ? 'warning' : 'success'
   const selectedNotification = notifications.find(notification => notification.id === selectedNotificationId)
@@ -568,7 +576,7 @@ function App() {
             </section> : notifications.length ? <div>{notifications.map(notification => <button type="button" key={notification.id} className={notification.read ? '' : 'unread'} onClick={() => { setNotifications(current => current.map(item => item.id === notification.id ? { ...item, read: true } : item)); setSelectedNotificationId(notification.id) }}><Bell /><span><strong>{notification.kind === 'moderation' ? notification.senderName : `${notification.senderName} replied to your message`}</strong><small>{notification.message}</small></span></button>)}</div> : <p>No notifications</p>}
           </div>}
         </div>
-        <div className="header-profile" onMouseEnter={keepProfileMenuOpen} onMouseLeave={scheduleProfileMenuClose} onFocus={keepProfileMenuOpen} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div>
+        <div className="header-profile" onMouseEnter={keepProfileMenuOpen} onMouseLeave={scheduleProfileMenuClose} onFocus={keepProfileMenuOpen} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu" aria-expanded={profileMenu}>{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button><button type="button" className="header-profile-menu-toggle" onClick={() => setProfileMenu(open => !open)} aria-label="Toggle profile menu" aria-expanded={profileMenu}><Menu /></button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div>
       </div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} onDeleteMessage={deleteChatMessage} onError={detail => showSideAlert('Error', detail, 'error')} collapsed={chatCollapsed} onToggleCollapsed={() => setChatCollapsed(current => !current)} />
@@ -580,8 +588,6 @@ function App() {
         <DinoTokensPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onBack={() => { setShowDinoTokens(false); setInGame(true) }} />
       ) : showAffiliates && walletAddress ? (
         <AffiliatesPage wallet={walletAddress} onBack={() => setShowAffiliates(false)} />
-      ) : showProfile && walletAddress && viewedProfile ? (
-        <ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
       ) : displayName && walletAddress ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} />
       ) : (
@@ -617,6 +623,8 @@ function App() {
         />
       )}
     </main>
+
+    {showProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={viewedProfile.wallet === walletAddress && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
 
     <footer className="site-footer">
       <section className="site-footer-brand"><div><span className="site-footer-mark">D</span><strong>DINOGAME</strong></div><p>Testnet dinosaur racing on Solana and MegaETH. Play, compete, collect Dino Tokens, and build your profile.</p><small>TESTNET ONLY · NO REAL VALUE</small></section>

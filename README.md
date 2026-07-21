@@ -10,6 +10,8 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 
 - The app is a single-player Dino Run race against a deterministic bot. It supports Solana devnet and MegaETH testnet entry payments.
 - The design language is the dark neon `DINOGAME` interface. Preserve the compact header, fixed left chat rail, teal/purple accents, wallet balance selector, and 3D coin assets unless the user explicitly requests a redesign.
+- The connected-wallet header ends with a compact avatar and three-line menu control. Hovering or focusing either keeps the same profile dropdown open; the menu is right-aligned beneath the combined control and constrained to the viewport.
+- The site footer follows the chat rail state: with chat open it is offset by `--chat-width` and compresses its grid into the remaining visible area; with chat closed it returns to zero offset and stretches across the full viewport.
 - A wallet must have more than `$8` of supported current testnet value and a saved worldwide username before it can enter the game. Returning named wallets must go straight to the game rather than the Access Granted screen.
 - The user has requested iterative visual changes frequently. Preserve existing unrelated changes in this dirty worktree; do not reset or replace whole files unnecessarily.
 - Build marker at handoff: `DUAL TESTNET BOT RACE - BUILD V52`.
@@ -61,6 +63,8 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - Usernames are 3–20 characters and unique case-insensitively across both networks. This is enforced atomically in Redis by `api/profile.ts`.
 - Avatar changes are signed by the connected wallet, cropped in the browser, and stored in the worldwide profile. The crop dialog supports mouse/touch dragging in both axes plus a zoom slider; the preview position and saved canvas crop must use the same normalized X/Y coordinates. Zoom recalculates those coordinates to preserve the center of the currently visible crop, including after the image has been dragged.
 - The Level/XP card must always be above Statistics, Transactions, and Settings tabs.
+- Player profiles open as a centered, internally scrollable modal over a dimmed game screen; opening a profile must not unmount the game underneath. The backdrop and Escape key close the modal.
+- The Statistics tab includes a dependency-free SVG performance chart for the latest 30 recorded transactions. It sorts games oldest-to-newest and displays cumulative native-token net result using the current fixed-entry model: a win contributes `+0.01`, and a loss contributes `-0.01`.
 - Settings uses an avatar tile plus Nickname, Referral Code, and disabled Account Email (`Coming soon`) fields. Referral codes currently save only to localStorage under `testnet-games:affiliate-code:<lowercase wallet>`; they are intentionally not worldwide yet.
 - Verified users are managed through Redis set `testnet-games:verified-wallets:v1` (instructions below).
 
@@ -69,7 +73,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | API route | Method | Purpose |
 | --- | --- | --- |
 | `/api/profile` | GET/POST | Profile, signed name/avatar updates, stats and transactions. |
-| `/api/leaderboard` | GET/POST | Worldwide scores and verified paid-entry recording. |
+| `/api/leaderboard` | GET/POST | Worldwide scores, the exact global `totalBets`, and verified paid-entry recording. |
 | `/api/chat-token` | GET | Ably token for realtime chat. |
 | `/api/chat-history` | GET/POST/DELETE | Durable newest-30 history, deleted-message verification, and signed moderator deletion. Requires Upstash. |
 | `/api/moderation` | GET/POST | Fetch durable player notifications; create a signed moderator warning or chat-timeout action. |
@@ -78,7 +82,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | `/api/prices` | GET | SOL/ETH/USDC price data. |
 | `/api/analytics` | POST | Anonymous application analytics. |
 
-Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:chat-deleted:v1`, `testnet-games:moderation-history:<network>:<wallet>`, `testnet-games:moderation-warnings:<network>:<wallet>`, `testnet-games:chat-timeout:<network>:<wallet>`, and `testnet-games:notifications:<network>:<wallet>`.
+Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:verified-bets:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:chat-deleted:v1`, `testnet-games:moderation-history:<network>:<wallet>`, `testnet-games:moderation-warnings:<network>:<wallet>`, `testnet-games:chat-timeout:<network>:<wallet>`, and `testnet-games:notifications:<network>:<wallet>`.
 
 ### Deployment and verification
 
@@ -247,7 +251,7 @@ Warnings require a reason and are kept in `testnet-games:moderation-history:<net
 
 Average time on site is `session_seconds_total / sessions_measured`. The `unique-visitors` HyperLogLog stores only anonymous browser IDs; wallet addresses and transaction hashes are not stored in analytics. They are used separately by the payment-verified leaderboard.
 
-The API stores the top 500 scores in the `testnet-games:leaderboard:v1` sorted set and returns the top 50. Before accepting a score, it verifies that its entry transaction paid the correct 0.01 testnet amount to the configured receiver. Each transaction can create only one worldwide row. Gameplay still runs in the browser, so this is payment-verified rather than cheat-proof.
+The API stores the top 500 scores in the `testnet-games:leaderboard:v1` sorted set and returns the top 50. Before accepting a score, it verifies that its entry transaction paid the correct 0.01 testnet amount to the configured receiver. Each transaction can create only one worldwide row. The exact worldwide Total Bets value shown under chat is the cardinality of `testnet-games:verified-bets:v1`; each member is a network-prefixed verified transaction, so retries cannot double-count. The first read automatically backfills the retained game history for entries created before this counter existed. Chat refreshes the figure every 15 seconds and immediately after this browser records a paid entry. Gameplay still runs in the browser, so this is payment-verified rather than cheat-proof.
 
 ## Vercel project settings
 
