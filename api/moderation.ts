@@ -13,6 +13,9 @@ const MODERATORS_KEY = 'testnet-games:moderators:v1'
 const encoder = new TextEncoder()
 const warningKey = (network: Network, wallet: string) => `testnet-games:moderation-warnings:${network}:${wallet}`
 const notificationKey = (network: Network, wallet: string) => `testnet-games:notifications:${network}:${wallet}`
+const timeoutKey = (network: Network, wallet: string) => `testnet-games:chat-timeout:${network}:${wallet}`
+const pendingTimeoutEndKey = (network: Network, wallet: string) => `testnet-games:chat-timeout-end-pending:${network}:${wallet}`
+const completedTimeoutEndKey = (network: Network, wallet: string, expiresAt: number) => `testnet-games:chat-timeout-end-completed:${network}:${wallet}:${expiresAt}`
 
 function redisClient() {
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim()
@@ -50,6 +53,39 @@ function verifySignature(network: Network, wallet: string, message: string, sign
   if (recovered !== wallet.toLowerCase()) throw new Error('Moderator wallet signature is invalid.')
 }
 
+async function publishEndedTimeout(redis: Redis, network: Network, wallet: string) {
+  const stored = await redis.get<unknown>(pendingTimeoutEndKey(network, wallet))
+  if (!stored) return
+  let pending: { expiresAt?: number } | null = null
+  if (typeof stored === 'object') pending = stored as { expiresAt?: number }
+  else if (typeof stored === 'string') {
+    try { pending = JSON.parse(stored) as { expiresAt?: number } } catch { /* Invalid legacy data is removed below. */ }
+  }
+  const expiresAt = Number(pending?.expiresAt)
+  if (!Number.isFinite(expiresAt)) {
+    await redis.del(pendingTimeoutEndKey(network, wallet))
+    return
+  }
+  if (Date.now() < expiresAt) return
+
+  // NX makes polling from multiple browser tabs safe: only one request can
+  // publish the completion notification for this exact timeout.
+  const claimed = await redis.set(completedTimeoutEndKey(network, wallet, expiresAt), '1', { nx: true, ex: 7 * 24 * 60 * 60 })
+  if (claimed) {
+    const notification = {
+      id: `timeout-ended-${network}-${wallet}-${expiresAt}`,
+      type: 'timeout-ended',
+      title: 'Timeout ended',
+      message: 'Your chat timeout has ended. You can send messages again.',
+      receivedAt: Date.now(),
+      read: false,
+    }
+    await redis.lpush(notificationKey(network, wallet), JSON.stringify(notification))
+    await redis.ltrim(notificationKey(network, wallet), 0, 29)
+  }
+  await redis.del(pendingTimeoutEndKey(network, wallet))
+}
+
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   response.setHeader('Cache-Control', 'no-store')
   try {
@@ -58,6 +94,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const wallet = typeof request.query.wallet === 'string' ? normalizeWallet(network, request.query.wallet) : ''
       if ((network !== 'solana' && network !== 'megaeth') || !wallet) throw new Error('A valid wallet and network are required.')
       const redis = redisClient()
+      await publishEndedTimeout(redis, network, wallet)
       const rows = await redis.lrange<unknown>(notificationKey(network, wallet), 0, 29)
       const notifications = rows.flatMap(row => {
         if (row && typeof row === 'object') return [row]
@@ -109,7 +146,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const auditKey = `testnet-games:moderation-history:${targetNetwork}:${cleanTarget}`
     await redis.lpush(auditKey, JSON.stringify(record))
     await redis.ltrim(auditKey, 0, 49)
-    if (effectiveAction === 'timeout') await redis.set(`testnet-games:chat-timeout:${targetNetwork}:${cleanTarget}`, JSON.stringify(record), { px: effectiveDuration * 60_000 })
+    if (effectiveAction === 'timeout') {
+      const expiresAt = createdAt + effectiveDuration * 60_000
+      await redis.set(timeoutKey(targetNetwork, cleanTarget), JSON.stringify(record), { px: effectiveDuration * 60_000 })
+      await redis.set(pendingTimeoutEndKey(targetNetwork, cleanTarget), JSON.stringify({ expiresAt }))
+    }
     const notification = {
       id: `moderation-${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
       type: effectiveAction,

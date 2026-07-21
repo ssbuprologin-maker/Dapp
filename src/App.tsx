@@ -78,11 +78,14 @@ function App() {
     try { return JSON.parse(localStorage.getItem(NOTIFICATIONS_CACHE_KEY) ?? '[]') as ReplyNotification[] } catch { return [] }
   })
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [newNotificationHint, setNewNotificationHint] = useState(false)
   const [selectedNotificationId, setSelectedNotificationId] = useState('')
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [sideAlerts, setSideAlerts] = useState<SideAlert[]>([])
   const [messageClosing, setMessageClosing] = useState(false)
   const alertedNotificationIds = useRef(new Set<string>())
+  const knownNotificationIds = useRef(new Set(notifications.map(notification => notification.id)))
+  const newNotificationHintTimer = useRef<number | null>(null)
   const notificationsClearedAt = useRef(0)
   const profileMenuCloseTimer = useRef<number | null>(null)
   const notificationsRef = useRef<HTMLDivElement>(null)
@@ -93,6 +96,14 @@ function App() {
   const connected = Boolean(evmAddress || localWallet || external.connected)
   const connectionType = isMegaEth ? 'MetaMask' : localWallet ? 'Site wallet' : external.wallet?.adapter.name ?? 'External wallet'
   const unreadNotifications = notifications.filter(notification => !notification.read).length
+  const showNewNotificationHint = useCallback(() => {
+    if (newNotificationHintTimer.current !== null) window.clearTimeout(newNotificationHintTimer.current)
+    setNewNotificationHint(true)
+    newNotificationHintTimer.current = window.setTimeout(() => {
+      setNewNotificationHint(false)
+      newNotificationHintTimer.current = null
+    }, 60_000)
+  }, [])
   const showSideAlert = useCallback((title: string, alertMessage: string, tone: SideAlert['tone']) => {
     const id = `${Date.now()}-${crypto.randomUUID()}`
     setSideAlerts(current => [...current, { id, title, message: alertMessage, tone }].slice(-5))
@@ -123,7 +134,10 @@ function App() {
     if (profileMenuCloseTimer.current !== null) window.clearTimeout(profileMenuCloseTimer.current)
     profileMenuCloseTimer.current = window.setTimeout(() => setProfileMenu(false), 160)
   }
-  useEffect(() => () => { if (profileMenuCloseTimer.current !== null) window.clearTimeout(profileMenuCloseTimer.current) }, [])
+  useEffect(() => () => {
+    if (profileMenuCloseTimer.current !== null) window.clearTimeout(profileMenuCloseTimer.current)
+    if (newNotificationHintTimer.current !== null) window.clearTimeout(newNotificationHintTimer.current)
+  }, [])
   useEffect(() => {
     if (!notificationsOpen) return
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -136,6 +150,12 @@ function App() {
   }, [notificationsOpen])
 
   useEffect(() => { try { localStorage.setItem(NOTIFICATIONS_CACHE_KEY, JSON.stringify(notifications.slice(0, 30))) } catch { /* Notifications are optional browser state. */ } }, [notifications])
+  useEffect(() => {
+    const newNotifications = notifications.filter(notification => !knownNotificationIds.current.has(notification.id))
+    if (!newNotifications.length) return
+    newNotifications.forEach(notification => knownNotificationIds.current.add(notification.id))
+    showNewNotificationHint()
+  }, [notifications, showNewNotificationHint])
   const addReplyNotification = useCallback((notification: ReplyNotification) => {
     setNotifications(current => current.some(item => item.id === notification.id) ? current : [notification, ...current].slice(0, 30))
   }, [])
@@ -647,6 +667,7 @@ function App() {
         <RewardsPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onClaim={claimReward} onOpenLeaderboard={() => { setShowDinoTokens(true); setShowProfile(false); setShowAffiliates(false); setInGame(false) }} onHeaderHover={() => { setNotificationsOpen(false); setSelectedNotificationId('') }} />
         <div className="header-notifications" ref={notificationsRef}>
           <button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setSelectedNotificationId(''); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>
+          {newNotificationHint && !notificationsOpen && <div className="new-notification-hint"><Bell />New notification</div>}
           {notificationsOpen && <div className="header-notification-menu">
             <header><strong>Notifications</strong><button type="button" disabled={!notifications.length} onClick={clearNotifications}>Clear</button></header>
             {selectedNotification ? <section className="notification-detail">

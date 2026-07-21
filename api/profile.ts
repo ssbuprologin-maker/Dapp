@@ -32,12 +32,18 @@ function allowedPlayerTags(requestedTags: string[]) {
   return unique.includes('verified') ? ['verified', ...otherTags.slice(0, 1)] : otherTags.slice(0, 1)
 }
 
+const LEVEL_30_SOL_EQ = 540
+const LEVEL_80_SOL_EQ = 5_000
+const LATE_LEVEL_GROWTH = (LEVEL_80_SOL_EQ / LEVEL_30_SOL_EQ) ** (1 / 50)
+const ENDGAME_LEVEL_GROWTH = 1.15
+
 function requiredSolForLevel(level: number) {
   if (level <= 1) return 0
-  if (level > 30) return 450 * 1.06 ** (level - 30)
+  if (level > 80) return LEVEL_80_SOL_EQ * ENDGAME_LEVEL_GROWTH ** (level - 80)
+  if (level > 30) return LEVEL_30_SOL_EQ * LATE_LEVEL_GROWTH ** (level - 30)
   const n = level - 1
   const x = n - 1
-  return 0.1 * n ** 2 * Math.exp(0.0342 * x + 0.000917 * x ** 2)
+  return 0.12 * n ** 2 * Math.exp(0.0342 * x + 0.000917 * x ** 2)
 }
 function levelFromWager(wagerSol: number) {
   for (let level = 2; level <= 100; level += 1) if (wagerSol < requiredSolForLevel(level)) return level - 1

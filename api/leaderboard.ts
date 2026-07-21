@@ -39,12 +39,21 @@ type PlayerLeaderboardState = {
   previousBest: LeaderboardRecord | null
 }
 
+const LEVEL_30_SOL_EQ = 540
+const LEVEL_80_SOL_EQ = 5_000
+const LATE_LEVEL_GROWTH = (LEVEL_80_SOL_EQ / LEVEL_30_SOL_EQ) ** (1 / 50)
+const ENDGAME_LEVEL_GROWTH = 1.15
+
 function requiredSolForLevel(level: number) {
   if (level <= 1) return 0
-  if (level > 30) return 450 * 1.06 ** (level - 30)
+  // Early progression starts about 20% higher than the original curve.
+  // Levels 31–80 climb toward 5,000 SOL-EQ, then the final twenty levels
+  // become deliberately demanding at 15% additional total wager per level.
+  if (level > 80) return LEVEL_80_SOL_EQ * ENDGAME_LEVEL_GROWTH ** (level - 80)
+  if (level > 30) return LEVEL_30_SOL_EQ * LATE_LEVEL_GROWTH ** (level - 30)
   const n = level - 1
   const x = n - 1
-  return 0.1 * n ** 2 * Math.exp(0.0342 * x + 0.000917 * x ** 2)
+  return 0.12 * n ** 2 * Math.exp(0.0342 * x + 0.000917 * x ** 2)
 }
 
 function levelFromWagerMicrosol(wagerMicrosol: number) {
