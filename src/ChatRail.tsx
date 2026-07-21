@@ -153,6 +153,12 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
         setMessages(current => current.filter(message => message.id !== messageId))
       }).catch(() => undefined)
     }
+    const receiveTotalBets = (ablyMessage: Ably.Message) => {
+      const value = ablyMessage.data && typeof ablyMessage.data === 'object'
+        ? Number((ablyMessage.data as { totalBets?: unknown }).totalBets)
+        : Number(ablyMessage.data)
+      if (active && Number.isFinite(value) && value >= 0) setTotalBets(current => Math.max(current, Math.floor(value)))
+    }
     const updateOnlineCount = async () => {
       try {
         const members = await channel.presence.get()
@@ -177,7 +183,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       } catch { /* Ably history and the local cache remain available if Redis is not configured. */ }
     }
     void loadStoredHistory()
-    void Promise.all([channel.subscribe('chat-message', receive), channel.subscribe('chat-delete', receiveDeletion)]).then(async () => {
+    void Promise.all([channel.subscribe('chat-message', receive), channel.subscribe('chat-delete', receiveDeletion), channel.subscribe('total-bets', receiveTotalBets)]).then(async () => {
       await channel.presence.subscribe(updateOnlineCount)
       await channel.presence.enter({ network })
       await updateOnlineCount()
@@ -187,7 +193,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       setError('')
     }).catch(reason => reportError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
     client.connection.on('failed', state => reportError(state.reason?.message ?? 'Live chat connection failed.'))
-    return () => { active = false; channelRef.current = null; if (clientRef.current === client) clientRef.current = null; void channel.presence.leave(); client.close() }
+    return () => { active = false; void channel.unsubscribe('total-bets', receiveTotalBets); channelRef.current = null; if (clientRef.current === client) clientRef.current = null; void channel.presence.leave(); client.close() }
   }, [canChat, network, onReplyNotification, wallet])
 
   useEffect(() => {
@@ -277,8 +283,12 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const openPlayerMenu = (messageId: string, clientX: number, clientY: number) => {
     const menuWidth = window.innerWidth <= 560 ? 205 : 230
     const menuHeight = isModerator ? 235 : 196
-    const left = Math.max(8, Math.min(clientX + 9, window.innerWidth - menuWidth - 8))
-    const top = Math.max(8, Math.min(clientY + 9, window.innerHeight - menuHeight - 8))
+    const gap = 6
+    const left = Math.max(8, Math.min(clientX + gap, window.innerWidth - menuWidth - 8))
+    const preferredTop = clientY + gap
+    const top = preferredTop + menuHeight <= window.innerHeight - 8
+      ? preferredTop
+      : Math.max(8, clientY - menuHeight - gap)
     setPlayerMenuPosition({ left, top })
     setSelectedPlayer(messageId)
   }
@@ -295,9 +305,9 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const verified = Boolean(verifiedProfiles[profileKey])
       const moderator = Boolean(moderatorProfiles[profileKey])
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
-      return <article key={item.id}>
+      return <article key={item.id} onClick={event => { if (!item.wallet || (event.target as HTMLElement).closest('button,.chat-user-menu')) return; event.stopPropagation(); openPlayerMenu(item.id, event.clientX, event.clientY) }}>
         <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p onClick={event => { event.stopPropagation(); openPlayerMenu(item.id, event.clientX, event.clientY) }}>{item.message}</p></div>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p>{item.message}</p></div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
         {selectedPlayer === item.id && item.wallet && (
           <div className="chat-user-menu" style={{ '--chat-menu-left': `${playerMenuPosition.left}px`, '--chat-menu-top': `${playerMenuPosition.top}px` } as CSSProperties} onClick={event => event.stopPropagation()}>

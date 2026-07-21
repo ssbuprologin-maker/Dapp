@@ -1,11 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { Redis } from '@upstash/redis'
 import { Connection, PublicKey } from '@solana/web3.js'
+import Ably from 'ably'
 
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
 const GAME_HISTORY_KEY = 'testnet-games:game-history:v1'
 const TOTAL_BETS_KEY = 'testnet-games:verified-bets:v1'
 const TOTAL_BETS_MIGRATION_KEY = 'testnet-games:verified-bets-migrated:v1'
+const REALTIME_CHANNEL = 'testnet-games-global-chat'
 const SOLANA_RECEIVER = '3aLAsDDF7JBhGGWdENyoFGP36PftRKpufHCN64myPLtN'
 const MEGAETH_RECEIVER = '0x4caf2b570acf0600810fec32373880fc8b94aa18'
 const SOLANA_ENTRY_LAMPORTS = 10_000_000
@@ -238,6 +240,14 @@ async function leaderboardResponse(redis: Redis) {
   return { scores, totalBets }
 }
 
+async function publishTotalBets(totalBets: number) {
+  const key = process.env.ABLY_API_KEY?.trim()
+  if (!key) return
+  try {
+    await new Ably.Rest(key).channels.get(REALTIME_CHANNEL).publish('total-bets', { totalBets })
+  } catch { /* Redis remains authoritative and clients retain their polling fallback. */ }
+}
+
 function belongsToPlayer(record: LeaderboardRecord, network: Network, wallet: string) {
   if (record.network !== network) return false
   if (record.walletAddress) {
@@ -316,7 +326,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     // A Redis set is the durable counter: the same on-chain payment can never
     // increase Total Bets twice, even when a browser retries the request.
-    await redis.sadd(TOTAL_BETS_KEY, `${network}:${transaction.toLowerCase()}`)
+    const newBet = Number(await redis.sadd(TOTAL_BETS_KEY, `${network}:${transaction.toLowerCase()}`)) === 1
+    if (newBet) await publishTotalBets(Number(await redis.scard(TOTAL_BETS_KEY)))
 
     const usedKey = `testnet-games:leaderboard-entry:${network}:${transaction}`
     const claimed = await redis.set(usedKey, '1', { nx: true })
