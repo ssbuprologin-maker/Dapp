@@ -318,6 +318,43 @@ function App() {
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not change name.') }
     finally { setSavingName(false) }
   }
+  const signAccountMessage = async (messageToSign: string) => {
+    if (!walletAddress) throw new Error('Connect your wallet first.')
+    if (isMegaEth) {
+      const provider = getMetaMaskProvider()
+      if (!provider) throw new Error('MetaMask is unavailable.')
+      return provider.request<string>({ method: 'personal_sign', params: [messageToSign, walletAddress] })
+    }
+    if (localWallet) return bs58.encode(ed25519.sign(new TextEncoder().encode(messageToSign), localWallet.secretKey.slice(0, 32)))
+    if (!external.signMessage) throw new Error('This wallet does not support message signing.')
+    return bs58.encode(await external.signMessage(new TextEncoder().encode(messageToSign)))
+  }
+  const setJoinedReferralCode = async (input: string) => {
+    if (!walletAddress) throw new Error('Connect your wallet first.')
+    const network = isMegaEth ? 'megaeth' : 'solana'
+    const normalizedWallet = isMegaEth ? walletAddress.toLowerCase() : walletAddress
+    const referralCode = cleanReferralCode(input)
+    const timestamp = Date.now()
+    const messageToSign = `Testnet Games joined referral\nNetwork: ${network}\nWallet: ${normalizedWallet}\nReferral: ${referralCode}\nTimestamp: ${timestamp}`
+    const signature = await signAccountMessage(messageToSign)
+    const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'set-referral', network, wallet: walletAddress, referralCode, timestamp, signature }) })
+    const body = await response.json() as { referralCode?: string; message?: string }
+    if (!response.ok) throw new Error(body.message ?? 'Could not set referral code.')
+    return body.referralCode ?? referralCode
+  }
+  const saveAffiliateCode = async (input: string) => {
+    if (!walletAddress) throw new Error('Connect your wallet first.')
+    const network = isMegaEth ? 'megaeth' : 'solana'
+    const normalizedWallet = isMegaEth ? walletAddress.toLowerCase() : walletAddress
+    const code = cleanReferralCode(input)
+    const timestamp = Date.now()
+    const messageToSign = `Testnet Games affiliate code\nNetwork: ${network}\nWallet: ${normalizedWallet}\nCode: ${code}\nTimestamp: ${timestamp}`
+    const signature = await signAccountMessage(messageToSign)
+    const response = await fetch('/api/affiliate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ network, wallet: walletAddress, code, timestamp, signature }) })
+    const body = await response.json() as { code?: string; message?: string }
+    if (!response.ok) throw new Error(body.message ?? 'Could not save affiliate code.')
+    return body.code ?? code
+  }
   const changeAvatar = async (avatarUrl: string) => {
     if (!walletAddress) return
     try {
@@ -630,11 +667,11 @@ function App() {
       {!connected ? <SingleplayerDinoGame address={null} paymentNetwork="solana" localWallet={null} sendTransaction={external.sendTransaction} connection={connection} onBalanceSpent={() => undefined} onViewProfile={viewChatProfile} onExit={() => undefined} onConnect={() => { setStep('choose'); setModal(true) }} /> : (!profileLoaded || walletActivity === 'checking' || walletActivity === 'idle') && walletAddress ? (
         <section className="returning-player-loading"><LoaderCircle className="spin" /><span>LOADING PLAYER</span><p>Opening your game…</p></section>
       ) : viewingOwnProfile && walletAddress && viewedProfile ? (
-        <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
+        <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onSetReferralCode={setJoinedReferralCode} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
       ) : showDinoTokens && walletAddress ? (
         <DinoTokensPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onBack={() => { setShowDinoTokens(false); setInGame(true) }} />
       ) : showAffiliates && walletAddress ? (
-        <AffiliatesPage wallet={walletAddress} onBack={() => setShowAffiliates(false)} />
+        <AffiliatesPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onSaveCode={saveAffiliateCode} onBack={() => setShowAffiliates(false)} />
       ) : displayName && walletAddress && walletActivity === 'eligible' ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} onConnect={() => { setStep('choose'); setModal(true) }} />
       ) : (
@@ -645,7 +682,7 @@ function App() {
     {accessScreen && walletAddress && <SignupOverlay wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} saving={savingName} onSubmit={changeDisplayName} onDisconnect={() => void disconnect()} />}
     {activityBlocked && walletAddress && <WalletActivityOverlay network={isMegaEth ? 'megaeth' : 'solana'} error={walletActivity === 'error' ? walletActivityError : ''} onRetry={() => setWalletActivityRetry(current => current + 1)} onDisconnect={() => void disconnect()} />}
 
-    {showProfile && !viewingOwnProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={false} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
+    {showProfile && !viewingOwnProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={false} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onSetReferralCode={setJoinedReferralCode} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
 
     <footer className="site-footer">
       <section className="site-footer-brand"><div><span className="site-footer-mark">D</span><strong>DINOGAME</strong></div><p>Testnet dinosaur racing on Solana and MegaETH. Play, compete, collect Dino Tokens, and build your profile.</p><small>TESTNET ONLY · NO REAL VALUE</small></section>

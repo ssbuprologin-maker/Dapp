@@ -114,6 +114,10 @@ function avatarChangeMessage(network: Network, wallet: string, avatar: string, t
   return `Testnet Games avatar change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nAvatar SHA-256: ${hash}\nTimestamp: ${timestamp}`
 }
 
+function joinedReferralMessage(network: Network, wallet: string, referralCode: string, timestamp: number) {
+  return `Testnet Games joined referral\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nReferral: ${referralCode}\nTimestamp: ${timestamp}`
+}
+
 export function kickChannelChangeMessage(network: Network, wallet: string, kickSlug: string, timestamp: number) {
   return `Testnet Games Kick channel change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nKick channel: ${kickSlug || 'none'}\nTimestamp: ${timestamp}`
 }
@@ -216,6 +220,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
       })
     }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
+    if (request.body?.action === 'set-referral') {
+      const referralCode = typeof request.body?.referralCode === 'string' ? request.body.referralCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) : ''
+      const timestamp = Number(request.body?.timestamp)
+      const signature = typeof request.body?.signature === 'string' ? request.body.signature : ''
+      if (referralCode.length < 3) throw new Error('Referral code must contain at least three letters or numbers.')
+      if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 5 * 60_000) throw new Error('Referral request expired. Try again.')
+      verifySignature(network, wallet, joinedReferralMessage(network, wallet, referralCode, timestamp), signature)
+      const current = await redis.get<Profile>(key)
+      if (!current?.displayName) throw new Error('Create your profile first.')
+      if (current.referralCode) throw new Error('The referral code used by this account is already locked.')
+      const owner = `${network}:${normalizedWallet(network, wallet)}`
+      const affiliateOwner = await redis.get<string>(`testnet-games:affiliate-code-owner:v1:${referralCode}`)
+      if (!affiliateOwner) throw new Error('That affiliate code does not exist.')
+      if (affiliateOwner === owner) throw new Error('You cannot use your own affiliate code.')
+      await redis.set(key, { ...current, referralCode })
+      await redis.sadd(`testnet-games:affiliate-referrals:v1:${referralCode}`, owner)
+      return response.status(200).json({ referralCode })
+    }
     if (request.body?.action === 'kick-channel') {
       const timestamp = Number(request.body?.timestamp)
       const signature = typeof request.body?.signature === 'string' ? request.body.signature : ''
@@ -249,12 +271,18 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (referralCode && referralCode.length < 3) throw new Error('Referral code must contain at least 3 letters or numbers.')
     verifySignature(network, wallet, nameChangeMessage(network, wallet, displayName, timestamp, referralCode), signature)
     const current = await redis.get<Profile>(key)
+    if (current?.displayName && referralCode) throw new Error('The referral code used at signup cannot be changed.')
     // The first username is required for entry and only needs a valid wallet
     // signature. Later username changes keep the balance and cooldown checks.
     if (current?.displayName) await verifyBalance(network, wallet)
     const nextChangeAt = (current?.changedAt ?? 0) + COOLDOWN_MS
     if (current?.displayName && nextChangeAt > Date.now()) throw new Error(`Name can be changed again in ${Math.ceil((nextChangeAt - Date.now()) / 60_000)} minute(s).`)
     const owner = `${network}:${normalizedWallet(network, wallet)}`
+    if (!current?.displayName && referralCode) {
+      const affiliateOwner = await redis.get<string>(`testnet-games:affiliate-code-owner:v1:${referralCode}`)
+      if (!affiliateOwner) throw new Error('That affiliate code does not exist.')
+      if (affiliateOwner === owner) throw new Error('You cannot use your own affiliate code.')
+    }
     const newlyClaimed = await claimUniqueUsername(redis, displayName, owner)
     let profileSaved = false
     try {

@@ -1,28 +1,42 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Copy, Download, Gift, LineChart, UsersRound, WalletCards } from 'lucide-react'
 
 function cleanCode(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12)
 }
 
-export default function AffiliatesPage({ wallet, onBack }: { wallet: string; onBack: () => void }) {
-  const storageKey = `testnet-games:affiliate-code:${wallet.toLowerCase()}`
+export default function AffiliatesPage({ wallet, network, onSaveCode, onBack }: { wallet: string; network: 'solana' | 'megaeth'; onSaveCode: (code: string) => Promise<string>; onBack: () => void }) {
   const suggestedCode = cleanCode(wallet.replace(/^0x/, '').slice(0, 8)) || 'DINOPLAY'
-  const [savedCode, setSavedCode] = useState(() => localStorage.getItem(storageKey) || suggestedCode)
-  const [code, setCode] = useState(savedCode)
+  const [savedCode, setSavedCode] = useState('')
+  const [code, setCode] = useState(suggestedCode)
   const [period, setPeriod] = useState<'7D' | '1M' | '3M' | 'ALL'>('7D')
   const [bannerSize, setBannerSize] = useState<'wide' | 'square'>('square')
   const [notice, setNotice] = useState('')
-  const referralUrl = useMemo(() => `${window.location.origin}/?ref=${savedCode}`, [savedCode])
+  const [saving, setSaving] = useState(false)
+  const referralUrl = useMemo(() => savedCode ? `${window.location.origin}/?ref=${savedCode}` : '', [savedCode])
 
-  const save = (event: FormEvent) => {
+  useEffect(() => {
+    let active = true
+    fetch(`/api/affiliate?network=${network}&wallet=${encodeURIComponent(wallet)}`)
+      .then(async response => {
+        const body = await response.json() as { code?: string; message?: string }
+        if (!response.ok) throw new Error(body.message ?? 'Could not load affiliate code.')
+        if (active && body.code) { setSavedCode(body.code); setCode(body.code) }
+      })
+      .catch(error => { if (active) setNotice(error instanceof Error ? error.message : 'Could not load affiliate code.') })
+    return () => { active = false }
+  }, [network, wallet])
+
+  const save = async (event: FormEvent) => {
     event.preventDefault()
     const next = cleanCode(code)
     if (next.length < 3) { setNotice('Use at least three letters or numbers.'); return }
-    localStorage.setItem(storageKey, next)
-    setCode(next); setSavedCode(next); setNotice('Affiliate code saved on this device.')
+    setSaving(true); setNotice('')
+    try { const saved = await onSaveCode(next); setCode(saved); setSavedCode(saved); setNotice('Worldwide affiliate code saved.') }
+    catch (error) { setNotice(error instanceof Error ? error.message : 'Could not save affiliate code.') }
+    finally { setSaving(false) }
   }
-  const copy = async () => { await navigator.clipboard.writeText(referralUrl); setNotice('Referral link copied.') }
+  const copy = async () => { if (!referralUrl) { setNotice('Save your unique affiliate code first.'); return }; await navigator.clipboard.writeText(referralUrl); setNotice('Referral link copied.') }
   const downloadBanner = () => {
     const dimensions = bannerSize === 'wide' ? [1280, 294] : [1000, 1100]
     const [width, height] = dimensions
@@ -37,7 +51,7 @@ export default function AffiliatesPage({ wallet, onBack }: { wallet: string; onB
     <button className="affiliate-back" onClick={onBack}><ArrowLeft /> Back</button>
     <section className="affiliate-hero">
       <span>JOIN OUR</span><h1>AFFILIATES</h1><p>Earn rewards from eligible games placed through your affiliate code.</p>
-      <div className="affiliate-code-row"><form onSubmit={save}><input value={code} onChange={event => setCode(cleanCode(event.target.value))} aria-label="Affiliate code" /><button>Save</button></form><div><span>{window.location.host}/?ref=</span><strong>{savedCode}</strong><button onClick={copy}><Copy /> Copy</button></div></div>
+      <div className="affiliate-code-row"><form onSubmit={save}><input value={code} onChange={event => setCode(cleanCode(event.target.value))} aria-label="Affiliate code" /><button disabled={saving}>{saving ? 'Saving…' : 'Save'}</button></form><div><span>{window.location.host}/?ref=</span><strong>{savedCode || 'SAVE A CODE'}</strong><button onClick={copy}><Copy /> Copy</button></div></div>
       {notice && <small>{notice}</small>}
     </section>
 
