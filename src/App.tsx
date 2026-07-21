@@ -572,12 +572,18 @@ function App() {
   }, [accessScreen])
   useEffect(() => {
     if (!showProfile) return
+    const profileIsOwn = Boolean(walletAddress && viewedProfile
+      && viewedProfile.network === (isMegaEth ? 'megaeth' : 'solana')
+      && (isMegaEth ? viewedProfile.wallet.toLowerCase() === walletAddress.toLowerCase() : viewedProfile.wallet === walletAddress))
+    // The connected player's profile is a normal full page and must retain
+    // document scrolling. Only an inspected-player modal locks the page behind it.
+    if (profileIsOwn) return
     const previousOverflow = document.body.style.overflow
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowProfile(false) }
     document.body.style.overflow = 'hidden'
     window.addEventListener('keydown', closeOnEscape)
     return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', closeOnEscape) }
-  }, [showProfile])
+  }, [isMegaEth, showProfile, viewedProfile, walletAddress])
 
   const messageTone: SideAlert['tone'] = /could not|error|failed|unavailable|invalid|not installed|select a wallet|rate.?limit|too many|unable/i.test(message) ? 'error' : /warning|timed out/i.test(message) ? 'warning' : 'success'
   const selectedNotification = notifications.find(notification => notification.id === selectedNotificationId)
