@@ -6,18 +6,18 @@ import bs58 from 'bs58'
 import { ed25519 } from '@noble/curves/ed25519'
 import { sha256 } from '@noble/hashes/sha2'
 import {
-  AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Copy, Download, ExternalLink,
-  Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles,
-  Menu, Settings, Share2, Trash2, Wallet, X,
+  AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Download,
+  Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, Sparkles,
+  Menu, Settings, Share2, Wallet, X,
 } from 'lucide-react'
 import {
-  createEncryptedWallet, exportRecovery, forgetStoredWallet, hasStoredWallet,
+  createEncryptedWallet, exportRecovery, hasStoredWallet,
   storeWallet, unlockStoredWallet,
 } from './cryptoWallet'
 import SingleplayerDinoGame from './SingleplayerDinoGame'
 import { getDevnetBalance } from './solanaRpc'
 import {
-  connectMetaMask, getMegaEthBalance, getMetaMaskProvider, MEGAETH_FAUCET_URL,
+  connectMetaMask, getMegaEthBalance, getMetaMaskProvider,
 } from './megaEth'
 import { trackAnalytics } from './analytics'
 import ChatRail, { type ModerationTarget, type ReplyNotification } from './ChatRail'
@@ -31,10 +31,7 @@ import dinoSkullUpper from './assets/dino-skull-upper.png'
 import dinoSkullJaw from './assets/dino-skull-jaw-v2.png'
 
 const JOIN_FEE_SOL = 0.01
-const MIN_SOL = 0.01001
-const MIN_MEGAETH = 0.010001
 const NAME_BALANCE = 0.1
-const MIN_WALLET_USD = 8
 const DEVNET_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
 const short = (value: string) => `${value.slice(0, 5)}...${value.slice(-5)}`
 
@@ -61,7 +58,9 @@ function App() {
   const [inGame, setInGame] = useState(false)
   const [displayName, setDisplayName] = useState('')
   const [profileLoaded, setProfileLoaded] = useState(false)
-  const [marketPrices, setMarketPrices] = useState<{ solUsd: number | null; ethUsd: number | null; usdcUsd: number } | null>(null)
+  const [walletActivity, setWalletActivity] = useState<'idle' | 'checking' | 'eligible' | 'blocked' | 'error'>('idle')
+  const [walletActivityError, setWalletActivityError] = useState('')
+  const [walletActivityRetry, setWalletActivityRetry] = useState(0)
   const [usdcBalance, setUsdcBalance] = useState(0)
   const [nextNameChangeAt, setNextNameChangeAt] = useState(0)
   const [savingName, setSavingName] = useState(false)
@@ -91,12 +90,6 @@ function App() {
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
   const isMegaEth = Boolean(evmAddress)
   const connected = Boolean(evmAddress || localWallet || external.connected)
-  const walletUsdValue = balance === null || !marketPrices ? null : isMegaEth
-    ? balance * (marketPrices.ethUsd ?? 0)
-    : balance * (marketPrices.solUsd ?? 0) + usdcBalance * marketPrices.usdcUsd
-  const eligible = !balanceUnavailable && balance !== null
-    && balance >= (isMegaEth ? MIN_MEGAETH : MIN_SOL)
-    && walletUsdValue !== null && walletUsdValue > MIN_WALLET_USD
   const connectionType = isMegaEth ? 'MetaMask' : localWallet ? 'Site wallet' : external.wallet?.adapter.name ?? 'External wallet'
   const unreadNotifications = notifications.filter(notification => !notification.read).length
   const showSideAlert = useCallback((title: string, alertMessage: string, tone: SideAlert['tone']) => {
@@ -178,17 +171,6 @@ function App() {
     void provider.request<string[]>({ method: 'eth_accounts' }).then(accounts => {
       if (accounts[0]) setEvmAddress(accounts[0])
     }).catch(() => { /* MetaMask is locked or no longer authorized. */ })
-  }, [])
-
-  useEffect(() => {
-    let active = true
-    const refresh = () => void fetch('/api/prices')
-      .then(response => response.ok ? response.json() as Promise<{ solUsd: number | null; ethUsd: number | null; usdcUsd: number }> : Promise.reject())
-      .then(prices => { if (active) setMarketPrices(prices) })
-      .catch(() => undefined)
-    refresh()
-    const timer = window.setInterval(refresh, 60_000)
-    return () => { active = false; window.clearInterval(timer) }
   }, [])
 
   useEffect(() => {
@@ -279,7 +261,22 @@ function App() {
     return () => { active = false }
   }, [isMegaEth, walletAddress])
 
-  const changeDisplayName = async (name: string) => {
+  useEffect(() => {
+    if (!walletAddress) { setWalletActivity('idle'); setWalletActivityError(''); return }
+    let active = true
+    const network = isMegaEth ? 'megaeth' : 'solana'
+    setWalletActivity('checking'); setWalletActivityError('')
+    void fetch(`/api/wallet-eligibility?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
+      .then(async response => {
+        const body = await response.json() as { eligible?: boolean; message?: string }
+        if (!response.ok) throw new Error(body.message ?? 'Wallet history check failed.')
+        if (active) setWalletActivity(body.eligible ? 'eligible' : 'blocked')
+      })
+      .catch(error => { if (active) { setWalletActivity('error'); setWalletActivityError(error instanceof Error ? error.message : 'Wallet history check failed.') } })
+    return () => { active = false }
+  }, [isMegaEth, walletActivityRetry, walletAddress])
+
+  const changeDisplayName = async (name: string, referralCode = '') => {
     if (!walletAddress) return
     setSavingName(true)
     try {
@@ -287,7 +284,8 @@ function App() {
       const cleanName = name.trim().replace(/\s+/g, ' ')
       const timestamp = Date.now()
       const normalizedWallet = isMegaEth ? walletAddress.toLowerCase() : walletAddress
-      const messageToSign = `Testnet Games name change\nNetwork: ${network}\nWallet: ${normalizedWallet}\nName: ${cleanName}\nTimestamp: ${timestamp}`
+      const cleanReferral = referralCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12)
+      const messageToSign = `Testnet Games name change\nNetwork: ${network}\nWallet: ${normalizedWallet}\nName: ${cleanName}${cleanReferral ? `\nReferral: ${cleanReferral}` : ''}\nTimestamp: ${timestamp}`
       let signature: string
       if (isMegaEth) {
         const provider = getMetaMaskProvider()
@@ -299,11 +297,12 @@ function App() {
         if (!external.signMessage) throw new Error('This wallet does not support message signing.')
         signature = bs58.encode(await external.signMessage(new TextEncoder().encode(messageToSign)))
       }
-      const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ network, wallet: walletAddress, displayName: cleanName, timestamp, signature }) })
+      const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ network, wallet: walletAddress, displayName: cleanName, referralCode: cleanReferral, timestamp, signature }) })
       const body = await response.json() as { displayName?: string; nextChangeAt?: number; message?: string }
       if (!response.ok) throw new Error(body.message ?? 'Could not change name.')
       setDisplayName(body.displayName ?? cleanName)
       setNextNameChangeAt(body.nextChangeAt ?? Date.now() + 10 * 60_000)
+      if (cleanReferral) localStorage.removeItem('testnet-games:pending-referral')
       setMessage('Worldwide name updated.')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not change name.') }
     finally { setSavingName(false) }
@@ -526,16 +525,14 @@ function App() {
     return body
   }
 
-  const copyAddress = async () => {
-    if (!walletAddress) return
-    await navigator.clipboard.writeText(walletAddress)
-    setMessage('Address copied.')
-  }
-
-  const accessScreen = Boolean(connected && walletAddress && profileLoaded && !displayName && !showProfile && !showAffiliates)
+  const accessScreen = Boolean(connected && walletAddress && profileLoaded && walletActivity === 'eligible' && !displayName && !showProfile && !showAffiliates)
+  const activityBlocked = Boolean(connected && walletAddress && profileLoaded && (walletActivity === 'blocked' || walletActivity === 'error'))
   useEffect(() => {
-    if (accessScreen) window.scrollTo({ top: 0, left: 0 })
-  }, [accessScreen, walletAddress])
+    if (!accessScreen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [accessScreen])
   useEffect(() => {
     if (!showProfile) return
     const previousOverflow = document.body.style.overflow
@@ -562,7 +559,7 @@ function App() {
     && viewedProfile.network === ownNetwork
     && (ownNetwork === 'megaeth' ? viewedProfile.wallet.toLowerCase() === walletAddress.toLowerCase() : viewedProfile.wallet === walletAddress))
 
-  return <div className={`shell ${accessScreen ? 'access-shell' : ''} ${chatCollapsed ? 'chat-collapsed' : ''}`}>
+  return <div className={`shell ${chatCollapsed ? 'chat-collapsed' : ''}`}>
     <header>
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setShowRewards(false); setShowDinoTokens(false); setInGame(connected); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
       {connected && walletAddress ? <div className="header-actions">
@@ -587,7 +584,7 @@ function App() {
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} onDeleteMessage={deleteChatMessage} onError={detail => showSideAlert('Error', detail, 'error')} collapsed={chatCollapsed} onToggleCollapsed={() => setChatCollapsed(current => !current)} />
 
     <main>
-      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : !profileLoaded && walletAddress ? (
+      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : (!profileLoaded || walletActivity === 'checking' || walletActivity === 'idle') && walletAddress ? (
         <section className="returning-player-loading"><LoaderCircle className="spin" /><span>LOADING PLAYER</span><p>Opening your game…</p></section>
       ) : viewingOwnProfile && walletAddress && viewedProfile ? (
         <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
@@ -595,41 +592,15 @@ function App() {
         <DinoTokensPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onBack={() => { setShowDinoTokens(false); setInGame(true) }} />
       ) : showAffiliates && walletAddress ? (
         <AffiliatesPage wallet={walletAddress} onBack={() => setShowAffiliates(false)} />
-      ) : displayName && walletAddress ? (
+      ) : displayName && walletAddress && walletActivity === 'eligible' ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} />
       ) : (
-        <WalletView
-          address={walletAddress!}
-          balance={balance}
-          eligible={eligible}
-          walletUsdValue={walletUsdValue}
-          profileLoaded={profileLoaded}
-          balanceUnavailable={balanceUnavailable}
-          currency={isMegaEth ? 'ETH' : 'SOL'}
-          joinFee={0.01}
-          faucetUrl={isMegaEth ? MEGAETH_FAUCET_URL : 'https://faucet.solana.com/'}
-          loading={loadingBalance}
-          type={connectionType}
-          localWallet={localWallet}
-          onRefresh={refreshBalance}
-          onCopy={copyAddress}
-          onDisconnect={disconnect}
-          onExport={() => localWallet && exportRecovery(localWallet)}
-          onForget={() => {
-            if (confirm('Delete this encrypted site wallet from this browser? Export a recovery file first.')) {
-              forgetStoredWallet(); setLocalWallet(null); setBalance(null); setMessage('Site wallet removed from this browser.')
-            }
-          }}
-          onEnter={() => { if (eligible && profileLoaded && displayName) setInGame(true) }}
-          displayName={displayName}
-          canChangeName={!displayName ? eligible : !balanceUnavailable && balance !== null && balance > NAME_BALANCE}
-          nextNameChangeAt={nextNameChangeAt}
-          savingName={savingName}
-          onChangeName={changeDisplayName}
-          onProfile={() => openProfile('statistics')}
-        />
+        <Landing onConnect={() => undefined} />
       )}
     </main>
+
+    {accessScreen && walletAddress && <SignupOverlay wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} saving={savingName} onSubmit={changeDisplayName} onDisconnect={() => void disconnect()} />}
+    {activityBlocked && walletAddress && <WalletActivityOverlay network={isMegaEth ? 'megaeth' : 'solana'} error={walletActivity === 'error' ? walletActivityError : ''} onRetry={() => setWalletActivityRetry(current => current + 1)} onDisconnect={() => void disconnect()} />}
 
     {showProfile && !viewingOwnProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={false} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
 
@@ -670,33 +641,64 @@ function Landing({ onConnect }: { onConnect: () => void }) {
   </section>
 }
 
-function WalletView({ address, balance, eligible, walletUsdValue, profileLoaded, balanceUnavailable, loading, type, currency, joinFee, faucetUrl, localWallet, displayName, canChangeName, nextNameChangeAt, savingName, onRefresh, onCopy, onDisconnect, onExport, onForget, onEnter, onChangeName, onProfile }: {
-  address: string; balance: number | null; eligible: boolean; walletUsdValue: number | null; profileLoaded: boolean; balanceUnavailable: boolean; loading: boolean; type: string; currency: string; joinFee: number; faucetUrl: string; localWallet: Keypair | null;
-  displayName: string; canChangeName: boolean; nextNameChangeAt: number; savingName: boolean;
-  onRefresh: () => void; onCopy: () => void; onDisconnect: () => void; onExport: () => void; onForget: () => void; onEnter: () => void; onChangeName: (name: string) => Promise<void>; onProfile: () => void;
+function cleanReferralCode(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12)
+}
+
+function WalletActivityOverlay({ network, error, onRetry, onDisconnect }: {
+  network: 'solana' | 'megaeth'
+  error: string
+  onRetry: () => void
+  onDisconnect: () => void
 }) {
-  const [firstUsername, setFirstUsername] = useState('')
-  const validFirstUsername = /^[A-Za-z0-9][A-Za-z0-9 _-]{1,18}[A-Za-z0-9]$/.test(firstUsername.trim())
-  const needsUsername = profileLoaded && !displayName
-  const canEnter = eligible && profileLoaded && !needsUsername
-  return <section className="wallet-page">
-    <div className="wallet-heading"><div><span>CONNECTED WALLET</span><h1>{eligible ? 'Access granted.' : 'Value required.'}</h1></div><div className="wallet-actions"><button onClick={onProfile}>View profile</button><button onClick={onDisconnect}><LogOut /> Disconnect</button></div></div>
-    <div className="account-grid">
-      <article className="balance-card">
-        <div className="account-line"><span className="wallet-symbol"><Wallet /></span><div><small>{type.toUpperCase()}</small><strong>{short(address)}</strong></div><button onClick={onCopy} aria-label="Copy address"><Copy /></button></div>
-        <p>TESTNET BALANCE <button onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} /></button></p>
-        <h2>{balanceUnavailable ? 'RPC BUSY' : balance === null ? '—' : balance.toFixed(4)} {!balanceUnavailable && <span>{currency}</span>}</h2>
-        <small className="wallet-usd-value">{walletUsdValue === null ? 'CHECKING LIVE USD VALUE' : `SUPPORTED WALLET VALUE · $${walletUsdValue.toFixed(2)}`}</small>
-        <div className={`gate-status ${eligible ? 'passed' : ''}`}><span>{eligible ? <Check /> : <LockKeyhole />}</span><div><strong>{eligible ? 'More than $8 verified' : 'More than $8 in supported assets required'}</strong><p>{eligible ? `This wallet also has enough ${currency} for the game entry.` : balanceUnavailable ? 'Wallet value could not be verified. Refresh and try again.' : `Hold over $8 total in ${currency}${currency === 'SOL' ? ' and Solana USDC' : ''}, plus enough native currency for the entry fee.`}</p></div></div>
-      </article>
-      <aside className="action-card">
-        {eligible ? <><span className="success-mark"><Check /></span><h2>{needsUsername ? 'Username required' : profileLoaded ? 'You are in' : 'Checking profile'}</h2><p>{needsUsername ? 'Choose your permanent first username below before entering.' : profileLoaded ? 'Your wallet passed the $8 supported-value requirement.' : 'Checking whether this wallet already has a profile.'}</p><button className="primary" disabled={!profileLoaded} onClick={needsUsername ? () => document.getElementById('first-wallet-username')?.focus() : onEnter}>{needsUsername ? 'CHOOSE USERNAME' : 'ENTER DAPP'} <ArrowRight /></button></> : <><span className="warning-mark"><AlertTriangle /></span><h2>Over $8 required</h2><p>Add supported testnet assets, then refresh the wallet value.</p><a className="primary" href={faucetUrl} target="_blank" rel="noreferrer">OPEN TESTNET FAUCET <ExternalLink /></a></>}
-      </aside>
-    </div>
-    {needsUsername && <form className="first-name-card" onSubmit={event => { event.preventDefault(); if (canChangeName && validFirstUsername) void onChangeName(firstUsername) }}><div><span>REQUIRED FIRST-TIME SETUP</span><strong>Choose your worldwide username</strong><small>This appears once for each wallet. Later changes move to Profile Settings.</small></div><input id="first-wallet-username" value={firstUsername} onChange={event => setFirstUsername(event.target.value)} maxLength={20} placeholder="3–20 characters" /><button disabled={!canChangeName || !validFirstUsername || savingName}>{savingName ? 'Saving…' : canChangeName ? 'Save username' : '$8+ value required'}</button></form>}
-    {localWallet && <div className="local-tools"><div><ShieldCheck /><p><strong>Browser-local site wallet</strong><span>Encrypted on this device. Keep an offline recovery file.</span></p></div><div><button onClick={onExport}><Download /> Export recovery</button><button className="danger" onClick={onForget}><Trash2 /> Forget wallet</button></div></div>}
-    {!canEnter && <div className="blocked-note"><LockKeyhole /> The game stays locked until this wallet has a username, more than $8 in supported value, and enough {currency} for the entry fee.</div>}
-  </section>
+  return <div className="signup-backdrop wallet-activity-backdrop" role="dialog" aria-modal="true" aria-labelledby="wallet-activity-title">
+    <section className="wallet-activity-modal">
+      <span><Wallet /></span>
+      <small>WALLET CHECK</small>
+      <h2 id="wallet-activity-title">One transaction required</h2>
+      <p>{error || `This ${network === 'solana' ? 'Solana devnet' : 'MegaETH testnet'} wallet has no confirmed transaction history yet. Make at least one transaction, then retry.`}</p>
+      <button className="signup-submit" onClick={onRetry}><RefreshCw /> RETRY CHECK</button>
+      <button className="wallet-activity-disconnect" onClick={onDisconnect}><LogOut /> Disconnect wallet</button>
+    </section>
+  </div>
+}
+
+function SignupOverlay({ wallet, network, saving, onSubmit, onDisconnect }: {
+  wallet: string
+  network: 'solana' | 'megaeth'
+  saving: boolean
+  onSubmit: (name: string, referralCode?: string) => Promise<void>
+  onDisconnect: () => void
+}) {
+  const [name, setName] = useState('')
+  const [accepted, setAccepted] = useState(false)
+  const [referralCode, setReferralCode] = useState(() => {
+    const fromUrl = cleanReferralCode(new URLSearchParams(window.location.search).get('ref') ?? '')
+    if (fromUrl) localStorage.setItem('testnet-games:pending-referral', fromUrl)
+    return fromUrl || cleanReferralCode(localStorage.getItem('testnet-games:pending-referral') ?? '')
+  })
+  const validName = /^[A-Za-z0-9][A-Za-z0-9 _-]{1,18}[A-Za-z0-9]$/.test(name.trim())
+  const validReferral = !referralCode || referralCode.length >= 3
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!validName || !accepted || !validReferral || saving) return
+    await onSubmit(name, referralCode)
+  }
+  return <div className="signup-backdrop" role="dialog" aria-modal="true" aria-labelledby="signup-title">
+    <section className="signup-modal">
+      <div className="signup-art" aria-hidden="true"><div className="signup-orbit one" /><div className="signup-orbit two" /><span className="signup-art-glow" /><span className="signup-art-logo"><img src={dinoSkullUpper} alt="" /><img src={dinoSkullJaw} alt="" /></span><strong>ENTER THE<br />DINO ARENA</strong><small>SOLANA + MEGAETH TESTNET</small></div>
+      <form onSubmit={submit}>
+        <button type="button" className="signup-close" onClick={onDisconnect} aria-label="Disconnect wallet"><X /></button>
+        <div className="signup-heading"><div><span>NEW PLAYER</span><h2 id="signup-title">SIGN UP</h2></div><span className="signup-mini-logo">D</span></div>
+        <p>Create the profile attached to this wallet.</p>
+        <label>ENTER NAME<input value={name} onChange={event => setName(event.target.value.slice(0, 20))} maxLength={20} placeholder="Name" autoFocus /><small>3–20 characters · letters, numbers, spaces, _ or -</small></label>
+        <label>REFERRAL CODE<input value={referralCode} onChange={event => setReferralCode(cleanReferralCode(event.target.value))} maxLength={12} placeholder="Optional" /><small>{referralCode ? 'Referral link detected and ready to save.' : 'Optional'}</small></label>
+        <label className="signup-terms"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} /><span>I agree that I have read and agree with the <strong>terms and conditions</strong>.</span></label>
+        <button className="signup-submit" disabled={!validName || !validReferral || !accepted || saving}>{saving ? <><LoaderCircle className="spin" /> CREATING PROFILE…</> : <>CREATE ACCOUNT <ArrowRight /></>}</button>
+        <code>{network === 'solana' ? 'SOLANA' : 'MEGAETH'} · {short(wallet)}</code>
+      </form>
+    </section>
+  </div>
 }
 
 function WalletModal({ step, setStep, wallets, pendingWallet, connecting, connectingMetaMask, selectedReady, stored, onExternal, onConnectExternal, onMetaMask, onClose, onCreated, onUnlocked }: {

@@ -8,7 +8,7 @@ import { keccak_256 } from '@noble/hashes/sha3'
 import { sha256 } from '@noble/hashes/sha2'
 
 type Network = 'solana' | 'megaeth'
-type Profile = { displayName: string; changedAt: number; avatarUrl?: string; discordId?: string }
+type Profile = { displayName: string; changedAt: number; avatarUrl?: string; discordId?: string; referralCode?: string }
 type LeaderboardRecord = { score: number; playedAt: number; won: boolean; transaction: string; network: Network; walletAddress?: string }
 
 const LEADERBOARD_KEY = 'testnet-games:leaderboard:v1'
@@ -103,8 +103,8 @@ async function claimUniqueUsername(redis: Redis, displayName: string, owner: str
   return true
 }
 
-export function nameChangeMessage(network: Network, wallet: string, displayName: string, timestamp: number) {
-  return `Testnet Games name change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nName: ${displayName}\nTimestamp: ${timestamp}`
+export function nameChangeMessage(network: Network, wallet: string, displayName: string, timestamp: number, referralCode = '') {
+  return `Testnet Games name change\nNetwork: ${network}\nWallet: ${normalizedWallet(network, wallet)}\nName: ${displayName}${referralCode ? `\nReferral: ${referralCode}` : ''}\nTimestamp: ${timestamp}`
 }
 
 function avatarChangeMessage(network: Network, wallet: string, avatar: string, timestamp: number) {
@@ -194,7 +194,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       const nextLevelWager = level >= 100 ? currentLevelWager : requiredSolForLevel(level + 1)
       const tags = allowedPlayerTags([Boolean(verified) ? 'verified' : '', Boolean(moderator) ? 'moderator' : ''])
       return response.status(200).json({
-        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', tags, verified: tags.includes('verified'), moderator: tags.includes('moderator'), warningCount: Number(warnings ?? 0), discordConnected: Boolean(profile?.discordId),
+        displayName: profile?.displayName ?? '', avatarUrl: profile?.avatarUrl ?? '', referralCode: profile?.referralCode ?? '', tags, verified: tags.includes('verified'), moderator: tags.includes('moderator'), warningCount: Number(warnings ?? 0), discordConnected: Boolean(profile?.discordId),
         nextChangeAt: (profile?.changedAt ?? 0) + COOLDOWN_MS,
         level, wagerEquivalentSol, wagerIntoLevelSol: level >= 100 ? 0 : wagerEquivalentSol - currentLevelWager,
         wagerForNextLevelSol: level >= 100 ? 0 : nextLevelWager - currentLevelWager,
@@ -214,15 +214,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
       if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 5 * 60_000) throw new Error('Avatar request expired. Try again.')
       verifySignature(network, wallet, avatarChangeMessage(network, wallet, avatarUrl, timestamp), signature)
       const current = await redis.get<Profile>(key)
-      await redis.set(key, { displayName: current?.displayName ?? '', changedAt: current?.changedAt ?? 0, discordId: current?.discordId, avatarUrl })
+      await redis.set(key, { displayName: current?.displayName ?? '', changedAt: current?.changedAt ?? 0, discordId: current?.discordId, referralCode: current?.referralCode, avatarUrl })
       return response.status(200).json({ avatarUrl })
     }
     const displayName = typeof request.body?.displayName === 'string' ? request.body.displayName.trim().replace(/\s+/g, ' ') : ''
+    const referralCode = typeof request.body?.referralCode === 'string' ? request.body.referralCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) : ''
     const timestamp = Number(request.body?.timestamp)
     const signature = typeof request.body?.signature === 'string' ? request.body.signature : ''
     if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{1,18}[A-Za-z0-9]$/.test(displayName)) throw new Error('Name must be 3–20 characters using letters, numbers, spaces, _ or -.')
     if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 5 * 60_000) throw new Error('Name-change request expired. Try again.')
-    verifySignature(network, wallet, nameChangeMessage(network, wallet, displayName, timestamp), signature)
+    if (referralCode && referralCode.length < 3) throw new Error('Referral code must contain at least 3 letters or numbers.')
+    verifySignature(network, wallet, nameChangeMessage(network, wallet, displayName, timestamp, referralCode), signature)
     const current = await redis.get<Profile>(key)
     // The first username is required for entry and only needs a valid wallet
     // signature. Later username changes keep the balance and cooldown checks.
@@ -238,10 +240,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
         const claimed = await redis.set(cooldownKey, '1', { nx: true, px: COOLDOWN_MS })
         if (claimed !== 'OK') throw new Error('Name can only be changed once every 10 minutes.')
       }
-      const profile: Profile = { ...current, displayName, changedAt: Date.now() }
+      const firstProfile = !current?.displayName
+      const profile: Profile = { ...current, displayName, changedAt: Date.now(), referralCode: firstProfile ? referralCode || undefined : current?.referralCode }
       await redis.set(key, profile)
       profileSaved = true
-      if (!current?.displayName) {
+      if (firstProfile) {
+        if (referralCode) await redis.sadd(`testnet-games:affiliate-referrals:v1:${referralCode}`, owner)
         const welcome = {
           id: `welcome-${network}-${normalizedWallet(network, wallet)}`,
           type: 'welcome',

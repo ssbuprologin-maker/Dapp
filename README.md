@@ -272,20 +272,6 @@ ABLY_API_KEY=YOUR_ABLY_ROOT_OR_SERVER_API_KEY
 
 `PAYOUT_WALLET_PRIVATE_KEY` must belong to the public receiver shown in the game. Add it only as a protected Vercel server variable. Do not use a `VITE_` prefix. The server rejects the key if it does not match the receiver and rejects any RPC that is not actually Solana devnet.
 
-### Planned chat airdrop custody boundary
-
-The chat-airdrop treasury is incoming-only. SOL and Solana-USDC contributions must be sent to this public Solana devnet address:
-
-```text
-3aLAsDDF7JBhGGWdENyoFGP36PftRKpufHCN64myPLtN
-```
-
-Do **not** add an airdrop private key, seed phrase, payout key, or `VITE_` secret. After the server verifies an incoming contribution, it records its SOL-equivalent value in Redis. A winner receives an on-site, wallet-bound game voucher in Redis and a notification; awarding or redeeming that voucher does not send a blockchain transaction. The voucher can only authorize a game entry and cannot be withdrawn or transferred.
-
-An EVM/ETH transaction cannot be sent to a Solana address. If MegaETH contributions are enabled later, they require a separate public EVM receiver. That does not change the voucher-only payout design and does not require the chat-airdrop server to hold an outgoing signing key.
-
-`PAYOUT_WALLET_PRIVATE_KEY` above belongs only to the existing optional legacy 2x game-payout endpoint. It is unrelated to the planned chat airdrop and may remain unset when that legacy payout is disabled.
-
 Chat history uses the same Upstash Redis variables already required for worldwide profiles and leaderboards. Ably persistence is optional now: it can provide an additional history source, but Redis retains the newest 30 messages even when Ably history is unavailable.
 
 You do not need to set `VITE_SOLANA_RPC_URL` or `SOLANA_RPC_URL`. Build V20 uses a free no-key transaction endpoint and automatically falls back to the official devnet endpoint. If free providers block balance reads, the balance displays `RPC BUSY` but play remains available; the signed entry transaction still rejects wallets that cannot cover 0.01 SOL plus the network fee.
