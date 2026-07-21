@@ -42,6 +42,7 @@ type ModalStep = 'choose' | 'create' | 'unlock' | 'backup'
 type ProfileSection = 'statistics' | 'transactions' | 'settings'
 type SideAlert = { id: string; title: string; message: string; tone: 'error' | 'warning' | 'success'; closing?: boolean }
 const NOTIFICATIONS_CACHE_KEY = 'testnet-games:notifications:v1'
+const notificationsClearedKey = (network: 'solana' | 'megaeth', wallet: string) => `testnet-games:notifications-cleared:v1:${network}:${wallet.toLowerCase()}`
 
 function App() {
   const { connection } = useConnection()
@@ -78,10 +79,12 @@ function App() {
     try { return JSON.parse(localStorage.getItem(NOTIFICATIONS_CACHE_KEY) ?? '[]') as ReplyNotification[] } catch { return [] }
   })
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [selectedNotificationId, setSelectedNotificationId] = useState('')
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [sideAlerts, setSideAlerts] = useState<SideAlert[]>([])
   const [messageClosing, setMessageClosing] = useState(false)
   const alertedNotificationIds = useRef(new Set<string>())
+  const notificationsClearedAt = useRef(0)
 
   const publicKey = localWallet?.publicKey ?? external.publicKey
   const walletAddress = evmAddress ?? publicKey?.toBase58() ?? null
@@ -123,6 +126,14 @@ function App() {
     setNotifications(current => current.some(item => item.id === notification.id) ? current : [notification, ...current].slice(0, 30))
   }, [])
   useEffect(() => {
+    if (!walletAddress) { notificationsClearedAt.current = 0; setSelectedNotificationId(''); return }
+    const network = isMegaEth ? 'megaeth' : 'solana'
+    const clearedAt = Number(localStorage.getItem(notificationsClearedKey(network, walletAddress)) ?? 0)
+    notificationsClearedAt.current = Number.isFinite(clearedAt) ? clearedAt : 0
+    setNotifications(current => current.filter(notification => notification.receivedAt > notificationsClearedAt.current))
+    setSelectedNotificationId('')
+  }, [isMegaEth, walletAddress])
+  useEffect(() => {
     if (!walletAddress) return
     const network: 'solana' | 'megaeth' = isMegaEth ? 'megaeth' : 'solana'
     let active = true
@@ -131,7 +142,7 @@ function App() {
         const response = await fetch(`/api/moderation?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
         const body = await response.json() as { notifications?: { id: string; title: string; message: string; receivedAt: number; read?: boolean }[] }
         if (!active || !response.ok || !Array.isArray(body.notifications)) return
-        const serverNotifications = body.notifications
+        const serverNotifications = body.notifications.filter(notification => notification.receivedAt > notificationsClearedAt.current)
         serverNotifications.forEach(notification => {
           if ((notification.title === 'Warning received' || /timed out/i.test(notification.title)) && !alertedNotificationIds.current.has(notification.id)) {
             alertedNotificationIds.current.add(notification.id)
@@ -139,7 +150,8 @@ function App() {
           }
         })
         setNotifications(current => {
-          const incoming = serverNotifications.map(notification => ({ id: notification.id, senderName: notification.title, message: notification.message, wallet: walletAddress, network, receivedAt: notification.receivedAt, read: Boolean(notification.read), kind: 'moderation' as const }))
+          const currentById = new Map(current.map(notification => [notification.id, notification]))
+          const incoming = serverNotifications.map(notification => ({ id: notification.id, senderName: notification.title, message: notification.message, wallet: walletAddress, network, receivedAt: notification.receivedAt, read: Boolean(notification.read || currentById.get(notification.id)?.read), kind: 'moderation' as const }))
           return [...incoming, ...current.filter(item => !incoming.some(notification => notification.id === item.id))].slice(0, 30)
         })
       } catch { /* Notification refresh is non-blocking. */ }
@@ -492,11 +504,38 @@ function App() {
   }, [accessScreen, walletAddress])
 
   const messageTone: SideAlert['tone'] = /could not|error|failed|unavailable|invalid|not installed|select a wallet|rate.?limit|too many|unable/i.test(message) ? 'error' : /warning|timed out/i.test(message) ? 'warning' : 'success'
+  const selectedNotification = notifications.find(notification => notification.id === selectedNotificationId)
+  const clearNotifications = () => {
+    if (walletAddress) {
+      const clearedAt = Date.now()
+      notificationsClearedAt.current = clearedAt
+      try { localStorage.setItem(notificationsClearedKey(isMegaEth ? 'megaeth' : 'solana', walletAddress), String(clearedAt)) } catch { /* Clearing still works for this session. */ }
+    }
+    setNotifications([])
+    setSelectedNotificationId('')
+  }
 
   return <div className={`shell ${accessScreen ? 'access-shell' : ''} ${chatCollapsed ? 'chat-collapsed' : ''}`}>
     <header>
       <button type="button" className="logo" onClick={() => { setShowProfile(false); setShowAffiliates(false); setShowRewards(false); setShowDinoTokens(false); setInGame(connected); setProfileMenu(false) }}><span className="dino-skull-logo"><img className="dino-skull-upper" src={dinoSkullUpper} alt="" /><img className="dino-skull-jaw" src={dinoSkullJaw} alt="" /></span><strong className="logo-title">DINOGAME</strong></button>
-      {connected && walletAddress ? <div className="header-actions"><HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} /><RewardsPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onClaim={claimReward} onOpenLeaderboard={() => { setShowDinoTokens(true); setShowProfile(false); setShowAffiliates(false); setInGame(false) }} /><div className="header-notifications"><button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>{notificationsOpen && <div className="header-notification-menu"><header><strong>Notifications</strong><button type="button" disabled={!unreadNotifications} onClick={() => setNotifications(current => current.map(notification => ({ ...notification, read: true })))}>Mark as read</button></header>{notifications.length ? <div>{notifications.map(notification => <button type="button" key={notification.id} className={notification.read ? '' : 'unread'} onClick={() => { setNotifications(current => current.map(item => item.id === notification.id ? { ...item, read: true } : item)); setNotificationsOpen(false); viewChatProfile(notification.wallet, notification.network) }}><Bell /><span><strong>{notification.kind === 'moderation' ? notification.senderName : `${notification.senderName} replied to your message`}</strong><small>{notification.message}</small></span></button>)}</div> : <p>No notifications</p>}</div>}</div><div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div></div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
+      {connected && walletAddress ? <div className="header-actions">
+        <HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} />
+        <RewardsPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onClaim={claimReward} onOpenLeaderboard={() => { setShowDinoTokens(true); setShowProfile(false); setShowAffiliates(false); setInGame(false) }} />
+        <div className="header-notifications">
+          <button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setSelectedNotificationId(''); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>
+          {notificationsOpen && <div className="header-notification-menu">
+            <header><strong>Notifications</strong><button type="button" disabled={!notifications.length} onClick={clearNotifications}>Clear</button></header>
+            {selectedNotification ? <section className="notification-detail">
+              <button type="button" onClick={() => setSelectedNotificationId('')}>← Inbox</button>
+              <Bell />
+              <strong>{selectedNotification.kind === 'moderation' ? selectedNotification.senderName : `${selectedNotification.senderName} replied to your message`}</strong>
+              <time>{new Date(selectedNotification.receivedAt).toLocaleString()}</time>
+              <p>{selectedNotification.message}</p>
+            </section> : notifications.length ? <div>{notifications.map(notification => <button type="button" key={notification.id} className={notification.read ? '' : 'unread'} onClick={() => { setNotifications(current => current.map(item => item.id === notification.id ? { ...item, read: true } : item)); setSelectedNotificationId(notification.id) }}><Bell /><span><strong>{notification.kind === 'moderation' ? notification.senderName : `${notification.senderName} replied to your message`}</strong><small>{notification.message}</small></span></button>)}</div> : <p>No notifications</p>}
+          </div>}
+        </div>
+        <div className="header-profile" onMouseEnter={() => setProfileMenu(true)} onMouseLeave={() => setProfileMenu(false)} onFocus={() => setProfileMenu(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu">{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div>
+      </div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} onError={detail => showSideAlert('Error', detail, 'error')} collapsed={chatCollapsed} onToggleCollapsed={() => setChatCollapsed(current => !current)} />
 

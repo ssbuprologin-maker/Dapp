@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, BadgeCheck, ExternalLink, Gamepad2, Image, MessageCircle, ShieldAlert, Trophy, UserRound, Wallet, X } from 'lucide-react'
 import { MEGAETH_EXPLORER_URL } from './megaEth'
 import { levelTier } from './leveling'
@@ -19,7 +19,9 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
   const [referralStatus, setReferralStatus] = useState('')
   const [cropSource, setCropSource] = useState('')
   const [cropZoom, setCropZoom] = useState(1)
+  const [cropPositionX, setCropPositionX] = useState(0)
   const [cropPositionY, setCropPositionY] = useState(0)
+  const [cropImageSize, setCropImageSize] = useState({ width: 1, height: 1 })
   const [section, setSection] = useState<ProfileSection>(initialSection)
   const [moderationAction, setModerationAction] = useState<'warn' | 'timeout' | null>(null)
   const [moderationNote, setModerationNote] = useState('')
@@ -29,6 +31,7 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
   const mutedStorageKey = `testnet-games:muted-chat:v1:${network}:${wallet}`
   const [mutedUsers, setMutedUsers] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(mutedStorageKey) ?? '[]') as string[] } catch { return [] } })
   const avatarInput = useRef<HTMLInputElement>(null)
+  const cropDrag = useRef<{ pointerId: number; x: number; y: number; positionX: number; positionY: number } | null>(null)
   useEffect(() => { fetch(`/api/profile?network=${network}&wallet=${encodeURIComponent(wallet)}`).then(response => response.json()).then((data: ProfileData) => { setProfile(data); if (data.avatarUrl) { setAvatar(data.avatarUrl); if (isOwn) localStorage.setItem(`testnet-games:avatar:${network}:${wallet}`, data.avatarUrl) } }).catch(() => undefined) }, [isOwn, network, wallet, displayName])
   useEffect(() => setName(displayName), [displayName])
   useEffect(() => setSection(initialSection), [initialSection])
@@ -55,7 +58,7 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
     if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) { setAvatarStatus('Choose a PNG, JPG, GIF or WebP image.'); return }
     if (file.size > 1024 * 1024) { setAvatarStatus('Image is too large. Maximum size is 1 MB.'); return }
     const reader = new FileReader()
-    reader.onload = () => { setCropSource(String(reader.result)); setCropZoom(1); setCropPositionY(0) }
+    reader.onload = () => { setCropSource(String(reader.result)); setCropZoom(1); setCropPositionX(0); setCropPositionY(0); setCropImageSize({ width: 1, height: 1 }) }
     reader.onerror = () => setAvatarStatus('Could not read that image.')
     reader.readAsDataURL(file)
   }
@@ -66,7 +69,7 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
       const context = canvas.getContext('2d')
       if (!context) return
       const sourceSize = Math.min(image.naturalWidth, image.naturalHeight) / cropZoom
-      const sourceX = (image.naturalWidth - sourceSize) / 2
+      const sourceX = Math.max(0, image.naturalWidth - sourceSize) * ((cropPositionX + 100) / 200)
       const sourceY = Math.max(0, image.naturalHeight - sourceSize) * ((cropPositionY + 100) / 200)
       context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, 256, 256)
       try {
@@ -81,6 +84,32 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
   }
   const removeAvatar = () => { localStorage.removeItem(`testnet-games:avatar:${network}:${wallet}`); setAvatar(''); setAvatarStatus('Profile picture removed.'); window.dispatchEvent(new CustomEvent('profile-avatar-updated', { detail: { wallet, network, avatar: '' } })); void onChangeAvatar('') }
   const playerName = profile?.displayName || displayName || `${wallet.slice(0, 5)}...${wallet.slice(-4)}`
+  const cropRatio = cropImageSize.width / cropImageSize.height
+  const cropBaseWidth = cropRatio >= 1 ? cropRatio * 100 : 100
+  const cropBaseHeight = cropRatio >= 1 ? 100 : 100 / cropRatio
+  const cropRenderWidth = cropBaseWidth * cropZoom
+  const cropRenderHeight = cropBaseHeight * cropZoom
+  const cropImageStyle = {
+    width: `${cropRenderWidth}%`, height: `${cropRenderHeight}%`,
+    left: `${-Math.max(0, cropRenderWidth - 100) * ((cropPositionX + 100) / 200)}%`,
+    top: `${-Math.max(0, cropRenderHeight - 100) * ((cropPositionY + 100) / 200)}%`,
+  }
+  const startCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId)
+    cropDrag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, positionX: cropPositionX, positionY: cropPositionY }
+  }
+  const moveCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = cropDrag.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    setCropPositionX(Math.max(-100, Math.min(100, drag.positionX - (event.clientX - drag.x) * 200 / Math.max(1, bounds.width))))
+    setCropPositionY(Math.max(-100, Math.min(100, drag.positionY - (event.clientY - drag.y) * 200 / Math.max(1, bounds.height))))
+  }
+  const endCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (cropDrag.current?.pointerId !== event.pointerId) return
+    cropDrag.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
   const runModeration = async () => {
     if (!moderationAction) return
     setModerating(true); setModerationError('')
@@ -100,5 +129,5 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
       <section className={`profile-panel settings-panel ${section !== 'settings' ? 'profile-hidden' : ''}`}><div className="panel-heading"><span>SETTINGS</span><h2>Customize profile</h2></div><div className="settings-account-grid"><div className="settings-avatar-column"><button type="button" className="avatar-editor-card" onClick={() => avatarInput.current?.click()} aria-label="Upload a profile picture">{avatar ? <img src={avatar} alt="Current profile" /> : <UserRound />}<span><Image /></span></button><small>Click the image to upload and crop.</small>{avatarStatus && <small>{avatarStatus}</small>}{avatar && <button type="button" className="avatar-remove" onClick={removeAvatar}>Remove picture</button>}</div><div className="settings-fields"><form className="settings-field-form" onSubmit={saveName}><label>NICKNAME<div><input value={name} onChange={event => setName(event.target.value)} maxLength={20} /><button disabled={!canChangeName || cooldown > 0 || savingName}>{cooldown ? `${cooldown}m` : 'Save'}</button></div></label></form><form className="settings-field-form" onSubmit={saveReferralCode}><label>REFERRAL CODE<div><input value={referralCode} onChange={event => setReferralCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 14))} maxLength={14} /><button>Save</button></div>{referralStatus && <small>{referralStatus}</small>}</label></form><div className="settings-field-form settings-email-soon"><label>ACCOUNT EMAIL<div><input value="" placeholder="Accepting email — coming soon" disabled readOnly /><button type="button" disabled>Coming soon</button></div></label></div></div></div><div className="setting-row"><MessageCircle /><div><strong>Discord</strong><small>{profile?.discordConnected ? 'Connected' : 'Coming soon.'}</small></div><button disabled>{profile?.discordConnected ? 'Connected' : 'Coming soon'}</button></div></section>
     </div>
     <section className={`profile-panel muted-users ${section !== 'settings' ? 'profile-hidden' : ''}`}><div className="panel-heading"><span>CHAT SETTINGS</span><h2>Muted users</h2></div><p>Muted players are hidden only on this device and this wallet.</p>{mutedUsers.length ? <ul>{mutedUsers.map(identity => { const [, mutedWallet] = identity.split(/:(.+)/); return <li key={identity}><code>{mutedWallet || identity}</code><button type="button" onClick={() => unmuteUser(identity)}>Unmute</button></li> })}</ul> : <div className="muted-users-empty">You have not muted any players.</div>}</section>
-  </section>{cropSource && <div className="crop-backdrop"><div className="crop-dialog"><span>PROFILE PICTURE</span><h2>Crop your image</h2><div className="crop-preview"><img src={cropSource} alt="Crop preview" style={{ objectPosition: `50% ${50 + cropPositionY / 2}%`, transform: `scale(${cropZoom})` }} /></div><label>ZOOM<input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={event => setCropZoom(Number(event.target.value))} /></label><label>VERTICAL POSITION<input type="range" min="-100" max="100" step="1" value={cropPositionY} onChange={event => setCropPositionY(Number(event.target.value))} /></label><div><button className="crop-cancel" onClick={() => setCropSource('')}>Cancel</button><button onClick={saveCrop}>Save crop</button></div></div></div>}</>
+  </section>{cropSource && <div className="crop-backdrop"><div className="crop-dialog"><span>PROFILE PICTURE</span><h2>Crop your image</h2><div className="crop-preview" onPointerDown={startCropDrag} onPointerMove={moveCropDrag} onPointerUp={endCropDrag} onPointerCancel={endCropDrag}><img src={cropSource} alt="Crop preview" draggable={false} style={cropImageStyle} onLoad={event => setCropImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} /></div><small className="crop-drag-hint">Drag the image to choose what appears in your profile picture.</small><label>ZOOM<input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={event => setCropZoom(Number(event.target.value))} /></label><div><button className="crop-cancel" onClick={() => setCropSource('')}>Cancel</button><button onClick={saveCrop}>Save crop</button></div></div></div>}</>
 }
