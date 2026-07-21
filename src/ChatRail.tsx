@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { CSSProperties, FormEvent, useEffect, useRef, useState } from 'react'
 import Ably from 'ably'
-import { BadgeCheck, Info, MessageCircle, Reply, Send, ShieldAlert, ShieldCheck, UserRound, VolumeX, X } from 'lucide-react'
+import { BadgeCheck, Info, MessageCircle, Reply, Send, ShieldAlert, ShieldCheck, Trash2, UserRound, VolumeX, X } from 'lucide-react'
 import { chatLevelTier } from './leveling'
 import type { TipTarget } from './TipModal'
 
@@ -50,7 +50,7 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   return normalizeChatMessage(message.data as Partial<ChatMessage>, network, wallet)
 }
 
-export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate, onError, collapsed, onToggleCollapsed }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void>; onError: (message: string) => void; collapsed: boolean; onToggleCollapsed: () => void }) {
+export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate, onDeleteMessage, onError, collapsed, onToggleCollapsed }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void>; onDeleteMessage: (messageId: string) => Promise<void>; onError: (message: string) => void; collapsed: boolean; onToggleCollapsed: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -62,6 +62,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const [moderatorProfiles, setModeratorProfiles] = useState<Record<string, boolean>>({})
   const [profileNames, setProfileNames] = useState<Record<string, string>>({})
   const [selectedPlayer, setSelectedPlayer] = useState('')
+  const [playerMenuPosition, setPlayerMenuPosition] = useState({ left: 8, top: 8 })
   const [mutedPlayers, setMutedPlayers] = useState<string[]>([])
   const [replyingTo, setReplyingTo] = useState<ReplyPreview | null>(null)
   const [showRules, setShowRules] = useState(false)
@@ -69,6 +70,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const [moderationNote, setModerationNote] = useState('')
   const [timeoutMinutes, setTimeoutMinutes] = useState(10)
   const [moderating, setModerating] = useState(false)
+  const [deletingMessageId, setDeletingMessageId] = useState('')
   const [moderationError, setModerationError] = useState('')
   const [gamesPlayed, setGamesPlayed] = useState(0)
   const [onlineCount, setOnlineCount] = useState(0)
@@ -79,6 +81,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const requestedAvatars = useRef(new Set<string>())
   const cacheHydrated = useRef(false)
   const ownMessageIds = useRef(new Set<string>())
+  const deletedMessageIds = useRef(new Set<string>())
   const canChat = Boolean(wallet && gamesPlayed >= 3)
   const remainingCharacters = Math.max(0, 140 - draft.length)
   const reportError = (detail: string) => { setError(detail); onError(detail) }
@@ -122,7 +125,16 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       if (item.replyTo && normalizedWallet && item.wallet !== normalizedWallet && ownMessageIds.current.has(item.replyTo.id)) {
         onReplyNotification({ id: item.id, senderName: item.name, message: item.message, wallet: item.wallet!, network: item.network, receivedAt: Date.now(), read: false })
       }
-      setMessages(current => keepNewest30([...current, item]))
+      if (!deletedMessageIds.current.has(item.id)) setMessages(current => keepNewest30([...current, item]))
+    }
+    const receiveDeletion = (ablyMessage: Ably.Message) => {
+      const messageId = ablyMessage.data && typeof ablyMessage.data === 'object' && typeof (ablyMessage.data as { id?: unknown }).id === 'string' ? (ablyMessage.data as { id: string }).id : ''
+      if (!messageId) return
+      void fetch(`/api/chat-history?deleted=${encodeURIComponent(messageId)}`).then(response => response.ok ? response.json() as Promise<{ deleted?: boolean }> : Promise.reject()).then(result => {
+        if (!active || !result.deleted) return
+        deletedMessageIds.current.add(messageId)
+        setMessages(current => current.filter(message => message.id !== messageId))
+      }).catch(() => undefined)
     }
     const updateOnlineCount = async () => {
       try {
@@ -133,8 +145,10 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     const loadStoredHistory = async () => {
       try {
         const response = await fetch('/api/chat-history')
-        const body = response.ok ? await response.json() as { messages?: unknown[] } : null
+        const body = response.ok ? await response.json() as { messages?: unknown[]; deletedIds?: unknown[] } : null
         if (!active || !body?.messages) return
+        const deletedIds = (body.deletedIds ?? []).filter((id): id is string => typeof id === 'string')
+        deletedMessageIds.current = new Set([...deletedMessageIds.current, ...deletedIds])
         const stored = body.messages.flatMap(item => {
           if (!item || typeof item !== 'object') return []
           const record = item as Partial<ChatMessage>
@@ -142,16 +156,16 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
           const normalized = normalizeChatMessage(record, record.network, record.wallet)
           return normalized ? [normalized] : []
         })
-        setMessages(current => keepNewest30([...current, ...stored]))
+        setMessages(current => keepNewest30([...current, ...stored]).filter(message => !deletedMessageIds.current.has(message.id)))
       } catch { /* Ably history and the local cache remain available if Redis is not configured. */ }
     }
     void loadStoredHistory()
-    void channel.subscribe('chat-message', receive).then(async () => {
+    void Promise.all([channel.subscribe('chat-message', receive), channel.subscribe('chat-delete', receiveDeletion)]).then(async () => {
       await channel.presence.subscribe(updateOnlineCount)
       await channel.presence.enter({ network })
       await updateOnlineCount()
       const history = await channel.history({ limit: 30, direction: 'backwards', untilAttach: true })
-      const historical = history.items.map(authenticatedChatMessage).filter((item): item is ChatMessage => Boolean(item)).reverse()
+      const historical = history.items.map(authenticatedChatMessage).filter((item): item is ChatMessage => item !== null && !deletedMessageIds.current.has(item.id)).reverse()
       if (active) setMessages(current => keepNewest30([...current, ...historical]))
       setError('')
     }).catch(reason => reportError(reason instanceof Error ? reason.message : 'Live chat unavailable.'))
@@ -233,6 +247,24 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     catch (error) { setModerationError(error instanceof Error ? error.message : 'Moderation action failed.') }
     finally { setModerating(false) }
   }
+  const deleteMessage = async (messageId: string) => {
+    if (deletingMessageId) return
+    setDeletingMessageId(messageId); setSelectedPlayer('')
+    try {
+      await onDeleteMessage(messageId)
+      deletedMessageIds.current.add(messageId)
+      setMessages(current => current.filter(message => message.id !== messageId))
+    } catch (error) { reportError(error instanceof Error ? error.message : 'Could not delete message.') }
+    finally { setDeletingMessageId('') }
+  }
+  const openPlayerMenu = (messageId: string, clientX: number, clientY: number) => {
+    const menuWidth = window.innerWidth <= 560 ? 205 : 230
+    const menuHeight = isModerator ? 235 : 196
+    const left = Math.max(8, Math.min(clientX + 9, window.innerWidth - menuWidth - 8))
+    const top = Math.max(8, Math.min(clientY + 9, window.innerHeight - menuHeight - 8))
+    setPlayerMenuPosition({ left, top })
+    setSelectedPlayer(messageId)
+  }
 
   return <aside className={`chat-rail ${collapsed ? 'is-collapsed' : ''}`}>
     <button type="button" className="chat-rail-toggle" onClick={onToggleCollapsed} aria-label={collapsed ? 'Open game chat' : 'Close game chat'} aria-expanded={!collapsed}><MessageCircle /></button>
@@ -248,13 +280,14 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
       return <article key={item.id}>
         <button className="chat-avatar" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p onClick={event => { event.stopPropagation(); setSelectedPlayer(item.id) }}>{item.message}</p></div>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}<p onClick={event => { event.stopPropagation(); openPlayerMenu(item.id, event.clientX, event.clientY) }}>{item.message}</p></div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
         {selectedPlayer === item.id && item.wallet && (
-          <div className="chat-user-menu" onClick={event => event.stopPropagation()}>
+          <div className="chat-user-menu" style={{ '--chat-menu-left': `${playerMenuPosition.left}px`, '--chat-menu-top': `${playerMenuPosition.top}px` } as CSSProperties} onClick={event => event.stopPropagation()}>
             <div>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}<strong>{name}</strong><b>{level}</b></div>
             <button type="button" onClick={() => { onViewProfile(item.wallet!, item.network); setSelectedPlayer('') }}><UserRound /> Check profile</button>
             <button type="button" onClick={() => { setMutedPlayers(current => current.includes(`${item.network}:${item.wallet}`) ? current : [...current, `${item.network}:${item.wallet}`]); setSelectedPlayer('') }}><VolumeX /> Mute locally</button>
+            {isModerator && <button type="button" className="delete-message" disabled={Boolean(deletingMessageId)} onClick={() => void deleteMessage(item.id)}><Trash2 /> {deletingMessageId === item.id ? 'Deleting...' : 'Delete message'}</button>}
             <button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: item.message }); setSelectedPlayer('') }}><Reply /> Reply</button>
           </div>
         )}

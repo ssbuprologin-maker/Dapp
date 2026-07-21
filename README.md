@@ -24,7 +24,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 - The game listens for Space/ArrowUp to jump, but its global keyboard handler must ignore focused inputs, textareas, selects, and content-editable elements. Otherwise it blocks spaces while chat is focused.
 - Clicking the message text opens Check profile, Mute locally, and Reply in a foreground action menu. Clicking a name or avatar goes directly to that profile. Tipping and moderator actions live on player profiles. Reply data is a short sanitized quote.
 - Reply notifications are cached in the browser. Moderation warnings, timeouts, and the first-profile welcome notification are durable Redis records under `testnet-games:notifications:<network>:<wallet>`. The client polls moderation notifications every 5 seconds, merges them by ID, and shows new warnings/timeouts both in the bell menu and as right-side warning alerts.
-- Moderator tags are backed by Redis role membership. The compact chat marker is a shield/info indicator; the profile heading carries the larger MOD badge. Moderators sign warnings and 1-minute to 7-day chat timeouts from player profiles. Mods cannot timeout other mods. A timeout removes Ably publish permission at the next short-lived token renewal; it does not prevent reading chat.
+- Moderator tags are backed by Redis role membership. The compact chat marker is a shield/info indicator; the profile heading carries the larger MOD badge. Moderators sign warnings and 1-minute to 7-day chat timeouts from player profiles. Mods cannot timeout other mods. A timeout removes Ably publish permission at the next short-lived token renewal; it does not prevent reading chat. Moderators can also delete a chat message from its text-action menu; every deletion requires a fresh wallet signature.
 - Tag policy is enforced by `/api/profile`: a player may have one role tag, or Verified plus one role tag. Verified is the only tag that can be paired with another tag; profile/chat consumers use the server-approved tag list.
 - Rewards live in the header hover menu rather than a separate rewards page. The Dino Token leaderboard is a full page. DT are a non-transferable ledger for now: verified wagers earn 1 DT per USD wagered, Daily Cases add recorded rewards, and a future token-claim system can build on this balance. Cashback is calculated at 0.2% of verified wagers and its claim is recorded in the rewards ledger; it does not send a wallet transaction yet.
 - Chat rules controls intentionally open an empty placeholder modal. Do not invent rules/content until asked.
@@ -59,7 +59,7 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 ### Profile and settings rules
 
 - Usernames are 3–20 characters and unique case-insensitively across both networks. This is enforced atomically in Redis by `api/profile.ts`.
-- Avatar changes are signed by the connected wallet, cropped in the browser, and stored in the worldwide profile. The crop dialog supports mouse/touch dragging in both axes plus a zoom slider; the preview position and saved canvas crop must use the same normalized X/Y coordinates.
+- Avatar changes are signed by the connected wallet, cropped in the browser, and stored in the worldwide profile. The crop dialog supports mouse/touch dragging in both axes plus a zoom slider; the preview position and saved canvas crop must use the same normalized X/Y coordinates. Zoom recalculates those coordinates to preserve the center of the currently visible crop, including after the image has been dragged.
 - The Level/XP card must always be above Statistics, Transactions, and Settings tabs.
 - Settings uses an avatar tile plus Nickname, Referral Code, and disabled Account Email (`Coming soon`) fields. Referral codes currently save only to localStorage under `testnet-games:affiliate-code:<lowercase wallet>`; they are intentionally not worldwide yet.
 - Verified users are managed through Redis set `testnet-games:verified-wallets:v1` (instructions below).
@@ -71,14 +71,14 @@ A Solana devnet and MegaETH testnet player-versus-bot runner with Phantom, Solfl
 | `/api/profile` | GET/POST | Profile, signed name/avatar updates, stats and transactions. |
 | `/api/leaderboard` | GET/POST | Worldwide scores and verified paid-entry recording. |
 | `/api/chat-token` | GET | Ably token for realtime chat. |
-| `/api/chat-history` | GET/POST | Durable newest 30 chat records. Requires Upstash. |
+| `/api/chat-history` | GET/POST/DELETE | Durable newest-30 history, deleted-message verification, and signed moderator deletion. Requires Upstash. |
 | `/api/moderation` | GET/POST | Fetch durable player notifications; create a signed moderator warning or chat-timeout action. |
 | `/api/rewards` | GET/POST | Dino Token balance/leaderboard plus signed Daily Case and cashback-ledger claims. |
 | `/api/payout` | POST | Solana devnet payout after a verified winning entry. |
 | `/api/prices` | GET | SOL/ETH/USDC price data. |
 | `/api/analytics` | POST | Anonymous application analytics. |
 
-Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:moderation-history:<network>:<wallet>`, `testnet-games:moderation-warnings:<network>:<wallet>`, `testnet-games:chat-timeout:<network>:<wallet>`, and `testnet-games:notifications:<network>:<wallet>`.
+Important Redis keys include `testnet-games:profile:<network>:<wallet>`, `testnet-games:username-owner:v1:*`, `testnet-games:verified-wallets:v1`, `testnet-games:moderators:v1`, `testnet-games:leaderboard:v1`, `testnet-games:game-history:v1`, `testnet-games:player-stats:<network>:<wallet>` (including DT/cashback rewards fields), `testnet-games:daily-case:<network>:<wallet>`, `testnet-games:chat-history:v1`, `testnet-games:chat-deleted:v1`, `testnet-games:moderation-history:<network>:<wallet>`, `testnet-games:moderation-warnings:<network>:<wallet>`, `testnet-games:chat-timeout:<network>:<wallet>`, and `testnet-games:notifications:<network>:<wallet>`.
 
 ### Deployment and verification
 

@@ -110,6 +110,23 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
     cropDrag.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
+  const changeCropZoom = (nextZoom: number) => {
+    const width = cropImageSize.width
+    const height = cropImageSize.height
+    const minimumSide = Math.min(width, height)
+    const oldSourceSize = minimumSide / cropZoom
+    const newSourceSize = minimumSide / nextZoom
+    const preserveAxisCenter = (dimension: number, position: number) => {
+      const oldAvailable = Math.max(0, dimension - oldSourceSize)
+      const currentCenter = oldAvailable * ((position + 100) / 200) + oldSourceSize / 2
+      const newAvailable = Math.max(0, dimension - newSourceSize)
+      if (newAvailable === 0) return 0
+      return Math.max(-100, Math.min(100, ((currentCenter - newSourceSize / 2) / newAvailable) * 200 - 100))
+    }
+    setCropPositionX(preserveAxisCenter(width, cropPositionX))
+    setCropPositionY(preserveAxisCenter(height, cropPositionY))
+    setCropZoom(nextZoom)
+  }
   const runModeration = async () => {
     if (!moderationAction) return
     setModerating(true); setModerationError('')
@@ -129,5 +146,5 @@ export default function ProfilePage({ isOwn, initialSection, wallet, network, di
       <section className={`profile-panel settings-panel ${section !== 'settings' ? 'profile-hidden' : ''}`}><div className="panel-heading"><span>SETTINGS</span><h2>Customize profile</h2></div><div className="settings-account-grid"><div className="settings-avatar-column"><button type="button" className="avatar-editor-card" onClick={() => avatarInput.current?.click()} aria-label="Upload a profile picture">{avatar ? <img src={avatar} alt="Current profile" /> : <UserRound />}<span><Image /></span></button><small>Click the image to upload and crop.</small>{avatarStatus && <small>{avatarStatus}</small>}{avatar && <button type="button" className="avatar-remove" onClick={removeAvatar}>Remove picture</button>}</div><div className="settings-fields"><form className="settings-field-form" onSubmit={saveName}><label>NICKNAME<div><input value={name} onChange={event => setName(event.target.value)} maxLength={20} /><button disabled={!canChangeName || cooldown > 0 || savingName}>{cooldown ? `${cooldown}m` : 'Save'}</button></div></label></form><form className="settings-field-form" onSubmit={saveReferralCode}><label>REFERRAL CODE<div><input value={referralCode} onChange={event => setReferralCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 14))} maxLength={14} /><button>Save</button></div>{referralStatus && <small>{referralStatus}</small>}</label></form><div className="settings-field-form settings-email-soon"><label>ACCOUNT EMAIL<div><input value="" placeholder="Accepting email — coming soon" disabled readOnly /><button type="button" disabled>Coming soon</button></div></label></div></div></div><div className="setting-row"><MessageCircle /><div><strong>Discord</strong><small>{profile?.discordConnected ? 'Connected' : 'Coming soon.'}</small></div><button disabled>{profile?.discordConnected ? 'Connected' : 'Coming soon'}</button></div></section>
     </div>
     <section className={`profile-panel muted-users ${section !== 'settings' ? 'profile-hidden' : ''}`}><div className="panel-heading"><span>CHAT SETTINGS</span><h2>Muted users</h2></div><p>Muted players are hidden only on this device and this wallet.</p>{mutedUsers.length ? <ul>{mutedUsers.map(identity => { const [, mutedWallet] = identity.split(/:(.+)/); return <li key={identity}><code>{mutedWallet || identity}</code><button type="button" onClick={() => unmuteUser(identity)}>Unmute</button></li> })}</ul> : <div className="muted-users-empty">You have not muted any players.</div>}</section>
-  </section>{cropSource && <div className="crop-backdrop"><div className="crop-dialog"><span>PROFILE PICTURE</span><h2>Crop your image</h2><div className="crop-preview" onPointerDown={startCropDrag} onPointerMove={moveCropDrag} onPointerUp={endCropDrag} onPointerCancel={endCropDrag}><img src={cropSource} alt="Crop preview" draggable={false} style={cropImageStyle} onLoad={event => setCropImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} /></div><small className="crop-drag-hint">Drag the image to choose what appears in your profile picture.</small><label>ZOOM<input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={event => setCropZoom(Number(event.target.value))} /></label><div><button className="crop-cancel" onClick={() => setCropSource('')}>Cancel</button><button onClick={saveCrop}>Save crop</button></div></div></div>}</>
+  </section>{cropSource && <div className="crop-backdrop"><div className="crop-dialog"><span>PROFILE PICTURE</span><h2>Crop your image</h2><div className="crop-preview" onPointerDown={startCropDrag} onPointerMove={moveCropDrag} onPointerUp={endCropDrag} onPointerCancel={endCropDrag}><img src={cropSource} alt="Crop preview" draggable={false} style={cropImageStyle} onLoad={event => setCropImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} /></div><small className="crop-drag-hint">Drag the image to choose what appears in your profile picture.</small><label>ZOOM<input type="range" min="1" max="3" step="0.05" value={cropZoom} onChange={event => changeCropZoom(Number(event.target.value))} /></label><div><button className="crop-cancel" onClick={() => setCropSource('')}>Cancel</button><button onClick={saveCrop}>Save crop</button></div></div></div>}</>
 }

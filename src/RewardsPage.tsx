@@ -14,7 +14,7 @@ const formatTokens = (value: number) => {
 }
 const formatSol = (microsol: number) => (microsol / 1_000_000).toFixed(4)
 
-export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboard }: { wallet: string; network: Network; onClaim: (action: RewardAction, caseCommitment?: string) => Promise<{ prize?: { label: string; chance: string }; message?: string; verification?: CaseVerification }>; onOpenLeaderboard: () => void }) {
+export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboard, onHeaderHover }: { wallet: string; network: Network; onClaim: (action: RewardAction, caseCommitment?: string) => Promise<{ prize?: { label: string; chance: string }; message?: string; verification?: CaseVerification }>; onOpenLeaderboard: () => void; onHeaderHover: () => void }) {
   const [data, setData] = useState<RewardData | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [cashbackOpen, setCashbackOpen] = useState(false)
@@ -28,8 +28,8 @@ export default function RewardsPage({ wallet, network, onClaim, onOpenLeaderboar
   const refresh = () => fetch(`/api/rewards?network=${network}&wallet=${encodeURIComponent(wallet)}`).then(response => response.ok ? response.json() as Promise<RewardData> : Promise.reject()).then(setData).catch(() => setError('Rewards are temporarily unavailable.'))
   useEffect(() => { void refresh() }, [network, wallet])
   useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current) }, [])
-  const keepMenuOpen = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); setMenuOpen(true) }
-  const scheduleMenuClose = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => { setMenuOpen(false); setCashbackOpen(false) }, 85) }
+  const keepMenuOpen = () => { onHeaderHover(); if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); setMenuOpen(true) }
+  const scheduleMenuClose = () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current); closeTimer.current = window.setTimeout(() => { setMenuOpen(false); setCashbackOpen(false) }, 180) }
   const claim = async (action: RewardAction) => {
     setClaiming(action); setError('')
     if (action === 'daily-case') setCasePhase('mining')
