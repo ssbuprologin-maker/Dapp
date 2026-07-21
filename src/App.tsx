@@ -7,7 +7,7 @@ import { ed25519 } from '@noble/curves/ed25519'
 import { sha256 } from '@noble/hashes/sha2'
 import {
   AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Download,
-  Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw, Sparkles,
+  Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw,
   Menu, Settings, Share2, Wallet, X,
 } from 'lucide-react'
 import {
@@ -627,7 +627,7 @@ function App() {
     <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} onDeleteMessage={deleteChatMessage} onError={detail => showSideAlert('Error', detail, 'error')} collapsed={chatCollapsed} onToggleCollapsed={() => setChatCollapsed(current => !current)} />
 
     <main>
-      {!connected ? <Landing onConnect={() => { setStep('choose'); setModal(true) }} /> : (!profileLoaded || walletActivity === 'checking' || walletActivity === 'idle') && walletAddress ? (
+      {!connected ? <SingleplayerDinoGame address={null} paymentNetwork="solana" localWallet={null} sendTransaction={external.sendTransaction} connection={connection} onBalanceSpent={() => undefined} onViewProfile={viewChatProfile} onExit={() => undefined} onConnect={() => { setStep('choose'); setModal(true) }} /> : (!profileLoaded || walletActivity === 'checking' || walletActivity === 'idle') && walletAddress ? (
         <section className="returning-player-loading"><LoaderCircle className="spin" /><span>LOADING PLAYER</span><p>Opening your game…</p></section>
       ) : viewingOwnProfile && walletAddress && viewedProfile ? (
         <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
@@ -636,9 +636,9 @@ function App() {
       ) : showAffiliates && walletAddress ? (
         <AffiliatesPage wallet={walletAddress} onBack={() => setShowAffiliates(false)} />
       ) : displayName && walletAddress && walletActivity === 'eligible' ? (
-        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} />
+        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} onConnect={() => { setStep('choose'); setModal(true) }} />
       ) : (
-        <Landing onConnect={() => undefined} />
+        <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} onConnect={() => { setStep('choose'); setModal(true) }} />
       )}
     </main>
 
@@ -673,15 +673,6 @@ function App() {
     {tipTarget && connected && walletAddress && <TipModal sender={walletAddress} senderNetwork={isMegaEth ? 'megaeth' : 'solana'} target={tipTarget} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onClose={() => setTipTarget(null)} onSuccess={(tipMessage, amount) => { setMessage(tipMessage); recordConfirmedSpend(amount) }} />}
     <div className="side-alert-stack" aria-live="polite">{message && <div className={`side-alert ${messageTone}${messageClosing ? ' is-closing' : ''}`}><span>{messageTone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{messageTone === 'error' ? 'Error' : messageTone === 'warning' ? 'Warning' : 'Success'}</strong><p>{message}</p></div><button onClick={dismissMessage} aria-label="Dismiss"><X /></button></div>}{sideAlerts.map(alert => <div className={`side-alert ${alert.tone}${alert.closing ? ' is-closing' : ''}`} key={alert.id}><span>{alert.tone === 'success' ? <Check /> : <AlertTriangle />}</span><div><strong>{alert.title}</strong><p>{alert.message}</p></div><button onClick={() => dismissSideAlert(alert.id)} aria-label="Dismiss"><X /></button></div>)}</div>
   </div>
-}
-
-function Landing({ onConnect }: { onConnect: () => void }) {
-  return <section className="landing">
-    <div className="badge"><Sparkles /> SOLANA + MEGAETH TESTNET</div>
-    <h1 className="join-title">JOIN NOW</h1>
-    <p>Connect Phantom or Solflare for Solana devnet, use MetaMask for MegaETH testnet, or create an encrypted Solana site wallet.</p>
-    <button className="hero-button" onClick={onConnect}><Wallet /> CONNECT WALLET <ArrowRight /></button>
-  </section>
 }
 
 function cleanReferralCode(value: string) {

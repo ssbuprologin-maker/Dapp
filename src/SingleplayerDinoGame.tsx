@@ -95,8 +95,8 @@ async function claimDevnetPayout(wallet: string, entrySignature: string) {
   return body
 }
 
-export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, onBalanceSpent, onViewProfile, onExit }: {
-  address: string
+export default function SingleplayerDinoGame({ address, paymentNetwork, localWallet, sendTransaction, signTransaction, connection, onBalanceSpent, onViewProfile, onExit, onConnect }: {
+  address: string | null
   paymentNetwork: PaymentNetwork
   localWallet: Keypair | null
   sendTransaction: (transaction: Transaction, connection: Connection) => Promise<string>
@@ -105,6 +105,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   onBalanceSpent: (amount: number) => void
   onViewProfile: (wallet: string, network: PaymentNetwork) => void
   onExit: () => void
+  onConnect: () => void
 }) {
   const [phase, setPhase] = useState<Phase>('ready')
   const [status, setStatus] = useState('Ready to play')
@@ -130,7 +131,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
 
   useEffect(() => {
     let active = true
-    setLocalScores(loadScores(address))
+    setLocalScores(address ? loadScores(address) : [])
     setLeaderboardMode('worldwide')
     const refreshWorldwide = () => {
       void worldwideLeaderboard()
@@ -150,7 +151,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   }, [phase])
 
   const finishGame = useCallback((score: number, raceWinner: Exclude<Winner, null>) => {
-    if (finishedRef.current) return
+    if (finishedRef.current || !address) return
     finishedRef.current = true
     const next = [...loadScores(address), {
       rank: 0,
@@ -248,6 +249,10 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
 
   const payEntry = useCallback(async () => {
     if (paying) return
+    if (!address) {
+      onConnect()
+      return
+    }
     setPaying(true)
     setPaymentError('')
     try {
@@ -319,7 +324,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
     } finally {
       setPaying(false)
     }
-  }, [address, connection, localWallet, onBalanceSpent, paying, paymentNetwork, sendTransaction, signTransaction])
+  }, [address, connection, localWallet, onBalanceSpent, onConnect, paying, paymentNetwork, sendTransaction, signTransaction])
 
   const reset = useCallback(() => {
     finishedRef.current = false
@@ -356,7 +361,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
   const leaderboard = leaderboardMode === 'worldwide' ? worldwideScores : localScores
 
   return <section className="game-page">
-    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V52</span><h1>Dino Run</h1></div><button onClick={onExit}>View profile</button></div>
+    <div className="game-header"><div><span>DUAL TESTNET BOT RACE - BUILD V52</span><h1>Dino Run</h1></div><button onClick={address ? onExit : onConnect}>{address ? 'View profile' : 'Connect wallet'}</button></div>
     <div className="game-layout">
       <div className="arena-card">
         <div className="arena-top"><span className={`live-pill ${phase}`}><i /> {phase.toUpperCase()}</span><strong>{Math.floor(elapsed / 1000).toString().padStart(3, '0')}M</strong></div>
@@ -366,7 +371,7 @@ export default function SingleplayerDinoGame({ address, paymentNetwork, localWal
           {phase !== 'ready' && <span className={`dino ${phase === 'running' ? 'is-running' : ''}`} style={{ transform: `translateY(-${y}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span>}
           {phase !== 'ready' && <><span className={`dino bot-dino ${phase === 'running' ? 'is-running' : ''}`} style={{ transform: `translateY(-${botY}px)` }}><i className="eye" /><i className="leg one" /><i className="leg two" /></span><span className="bot-label" style={{ transform: `translateY(-${botY}px)` }}>BOT</span></>}
           {phase === 'finished' && <div className="arena-message result"><strong>{winner === 'player' ? 'You beat the bot!' : 'Bot wins'}</strong><span>You ran {Math.floor(elapsed / 1000)} meters</span><button onClick={event => { event.stopPropagation(); reset() }}>Play again</button></div>}
-          {phase === 'ready' && <div className="arena-message payment-message"><strong>{paymentNetwork === 'solana' ? 'Race the bot for 2x' : 'Race the bot on MegaETH'}</strong><span>{paymentNetwork === 'solana' ? 'Pay 0.01 devnet SOL. Beat the bot to receive 0.02.' : 'Pay 0.01 MegaETH testnet ETH. Wins are recorded locally.'}</span><code>Receiver: {short(paymentNetwork === 'solana' ? receiverAddress : MEGAETH_RECEIVER)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); payEntry() }}>{paying ? 'CONFIRMING TRANSACTION...' : `START RACE · 0.01 ${paymentNetwork === 'solana' ? 'SOL' : 'ETH'}`}</button><small>{paymentNetwork === 'solana' ? 'Devnet prototype. The browser reports the winner to the payout function.' : 'MegaETH testnet entry. MetaMask confirms the payment and network.'}</small></div>}
+          {phase === 'ready' && <div className="arena-message payment-message"><strong>{paymentNetwork === 'solana' ? 'Race the bot for 2x' : 'Race the bot on MegaETH'}</strong><span>{paymentNetwork === 'solana' ? 'Pay 0.01 devnet SOL. Beat the bot to receive 0.02.' : 'Pay 0.01 MegaETH testnet ETH. Wins are recorded locally.'}</span><code>Receiver: {short(paymentNetwork === 'solana' ? receiverAddress : MEGAETH_RECEIVER)}</code>{paymentError && <p>{paymentError}</p>}<button className="join-game-button" disabled={paying} onClick={event => { event.stopPropagation(); void payEntry() }}>{!address ? 'CONNECT WALLET TO PLAY' : paying ? 'CONFIRMING TRANSACTION...' : `START RACE · 0.01 ${paymentNetwork === 'solana' ? 'SOL' : 'ETH'}`}</button><small>{address ? paymentNetwork === 'solana' ? 'Devnet prototype. The browser reports the winner to the payout function.' : 'MegaETH testnet entry. MetaMask confirms the payment and network.' : 'Connect a supported testnet wallet when you are ready to start.'}</small></div>}
         </button>
         <div className="controls-note"><span>SPACE / UP ARROW / TAP TO JUMP</span><p>{status}</p></div>
       </div>
