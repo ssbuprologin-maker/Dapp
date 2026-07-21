@@ -3,6 +3,7 @@ import Ably from 'ably'
 import { BadgeCheck, Info, MessageCircle, Reply, Send, ShieldAlert, ShieldCheck, Trash2, UserRound, VolumeX, X } from 'lucide-react'
 import { chatLevelTier } from './leveling'
 import type { TipTarget } from './TipModal'
+import thinkingFrogMeme from './assets/meme-thinking-frog-exact.png'
 
 type Network = 'solana' | 'megaeth'
 type ReplyPreview = { id: string; name: string; message: string }
@@ -12,6 +13,12 @@ type ModerationAction = 'warn' | 'timeout'
 export type ModerationTarget = { wallet: string; network: Network; name: string; action: ModerationAction }
 const CHANNEL = 'testnet-games-global-chat'
 const CHAT_CACHE_KEY = 'testnet-games:chat-cache:v1'
+const MEME_PREFIX = '[[meme:'
+const SITE_EMOJIS = ['🦖', '🐸', '😂', '🔥', '💀', '👀', '🏆', '💜', '⚡', '✅', '❌', '🫡']
+const SITE_MEMES = [{ id: 'thinking-frog', label: 'Thinking frog', src: thinkingFrogMeme }]
+const memeToken = (id: string) => `${MEME_PREFIX}${id}]]`
+const messageMeme = (message: string) => SITE_MEMES.find(meme => message === memeToken(meme.id))
+const messagePreview = (message: string) => messageMeme(message)?.label ?? message
 const mutedCacheKey = (network: Network, wallet: string | null) => `testnet-games:muted-chat:v1:${network}:${wallet ?? 'guest'}`
 
 function normalizeChatMessage(data: Partial<ChatMessage>, network: Network, wallet: string): ChatMessage | null {
@@ -50,7 +57,7 @@ function authenticatedChatMessage(message: Ably.Message): ChatMessage | null {
   return normalizeChatMessage(message.data as Partial<ChatMessage>, network, wallet)
 }
 
-export default function ChatRail({ wallet, network, displayName, isModerator, onViewProfile, onTipPlayer, onReplyNotification, onModerate, onDeleteMessage, onError, collapsed, onToggleCollapsed }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void>; onDeleteMessage: (messageId: string) => Promise<void>; onError: (message: string) => void; collapsed: boolean; onToggleCollapsed: () => void }) {
+export default function ChatRail({ wallet, network, displayName, isModerator, timeoutExpiresAt, onViewProfile, onTipPlayer, onReplyNotification, onModerate, onDeleteMessage, onError, collapsed, onToggleCollapsed }: { wallet: string | null; network: Network; displayName: string; isModerator: boolean; timeoutExpiresAt: number; onViewProfile: (wallet: string, network: Network) => void; onTipPlayer: (target: TipTarget) => void; onReplyNotification: (notification: ReplyNotification) => void; onModerate: (target: ModerationTarget, note: string, durationMinutes: number) => Promise<void>; onDeleteMessage: (messageId: string) => Promise<void>; onError: (message: string) => void; collapsed: boolean; onToggleCollapsed: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(cachedMessages)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -69,6 +76,8 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const [playerMenuSequence, setPlayerMenuSequence] = useState(0)
   const [mutedPlayers, setMutedPlayers] = useState<string[]>([])
   const [replyingTo, setReplyingTo] = useState<ReplyPreview | null>(null)
+  const [composerPickerOpen, setComposerPickerOpen] = useState(false)
+  const [composerPickerTab, setComposerPickerTab] = useState<'emojis' | 'memes'>('emojis')
   const [showRules, setShowRules] = useState(false)
   const [moderationTarget, setModerationTarget] = useState<ModerationTarget | null>(null)
   const [moderationNote, setModerationNote] = useState('')
@@ -79,7 +88,9 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const [gamesPlayed, setGamesPlayed] = useState(0)
   const [onlineCount, setOnlineCount] = useState(0)
   const [totalBets, setTotalBets] = useState(0)
+  const [timeoutNow, setTimeoutNow] = useState(Date.now())
   const feed = useRef<HTMLDivElement>(null)
+  const composerPicker = useRef<HTMLDivElement>(null)
   const channelRef = useRef<Ably.RealtimeChannel | null>(null)
   const clientRef = useRef<Ably.Realtime | null>(null)
   const lastSentAt = useRef(0)
@@ -87,8 +98,19 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   const cacheHydrated = useRef(false)
   const ownMessageIds = useRef(new Set<string>())
   const deletedMessageIds = useRef(new Set<string>())
-  const canChat = Boolean(wallet && gamesPlayed >= 3)
+  const timeoutRemainingMs = Math.max(0, timeoutExpiresAt - timeoutNow)
+  const isTimedOut = timeoutRemainingMs > 0
+  const canChat = Boolean(wallet && gamesPlayed >= 3 && !isTimedOut)
   const remainingCharacters = Math.max(0, 140 - draft.length)
+  const timeoutCountdown = (() => {
+    const totalSeconds = Math.max(0, Math.ceil(timeoutRemainingMs / 1_000))
+    const days = Math.floor(totalSeconds / 86_400)
+    const hours = Math.floor(totalSeconds % 86_400 / 3_600)
+    const minutes = Math.floor(totalSeconds % 3_600 / 60)
+    const seconds = totalSeconds % 60
+    const clock = [hours, minutes, seconds].map(value => String(value).padStart(2, '0')).join(':')
+    return days ? `${days}d ${clock}` : clock
+  })()
   const reportError = (detail: string) => {
     // Ably emits this while an old client is intentionally closing during
     // startup, wallet connection, and account changes. It is not a user error.
@@ -100,8 +122,26 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
   useEffect(() => {
     try { setMutedPlayers(JSON.parse(localStorage.getItem(mutedCacheKey(network, wallet)) ?? '[]') as string[]) } catch { setMutedPlayers([]) }
   }, [network, wallet])
+  useEffect(() => {
+    setTimeoutNow(Date.now())
+    if (!timeoutExpiresAt || timeoutExpiresAt <= Date.now()) return
+    const interval = window.setInterval(() => {
+      const now = Date.now()
+      setTimeoutNow(now)
+      if (now >= timeoutExpiresAt) window.clearInterval(interval)
+    }, 1_000)
+    return () => window.clearInterval(interval)
+  }, [timeoutExpiresAt])
   useEffect(() => { try { localStorage.setItem(mutedCacheKey(network, wallet), JSON.stringify(mutedPlayers)) } catch { /* Local mute state is optional. */ } }, [mutedPlayers, network, wallet])
   useEffect(() => { const closeMenu = () => setSelectedPlayer(''); document.addEventListener('click', closeMenu); return () => document.removeEventListener('click', closeMenu) }, [])
+  useEffect(() => {
+    if (!composerPickerOpen) return
+    const closePicker = (event: PointerEvent) => {
+      if (!composerPicker.current?.contains(event.target as Node)) setComposerPickerOpen(false)
+    }
+    document.addEventListener('pointerdown', closePicker)
+    return () => document.removeEventListener('pointerdown', closePicker)
+  }, [composerPickerOpen])
 
   useEffect(() => {
     if (!wallet) { setGamesPlayed(0); return }
@@ -267,9 +307,7 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [kickChannels])
 
-  const send = async (event: FormEvent) => {
-    event.preventDefault()
-    const message = draft.trim()
+  const publishMessage = async (message: string) => {
     if (!wallet || !canChat || !channelRef.current || !message || sending) return
     if (Date.now() - lastSentAt.current < 3_000) { reportError('Slow down—wait a few seconds before chatting again.'); return }
     setSending(true); setError('')
@@ -285,10 +323,18 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
         await channelRef.current.publish('chat-message', record)
       }
       void fetch('/api/chat-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record) }).catch(() => undefined)
-      lastSentAt.current = Date.now(); setDraft(''); setReplyingTo(null)
-    } catch (reason) { reportError(reason instanceof Error ? reason.message : 'Could not send message.') }
+      lastSentAt.current = Date.now(); setDraft(''); setReplyingTo(null); setComposerPickerOpen(false)
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : 'Could not send message.'
+      reportError(/publish.*capability|capability.*publish/i.test(detail) ? 'You are timed out.' : detail)
+    }
     finally { setSending(false) }
   }
+  const send = (event: FormEvent) => {
+    event.preventDefault()
+    void publishMessage(draft.trim())
+  }
+  const sendMeme = (id: string) => void publishMessage(memeToken(id))
   const openModeration = (target: ModerationTarget) => { setModerationTarget(target); setModerationNote(''); setTimeoutMinutes(10); setModerationError(''); setSelectedPlayer('') }
   const submitModeration = async (event: FormEvent) => {
     event.preventDefault()
@@ -338,11 +384,12 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
       const kickSlug = kickChannels[profileKey] ?? ''
       const streamerLive = Boolean(kickSlug && liveKickChannels[kickSlug])
       const name = isOwn && displayName ? displayName : profileNames[profileKey] || (item.wallet ? `${item.wallet.slice(0, 5)}...${item.wallet.slice(-4)}` : item.name)
+      const meme = messageMeme(item.message)
       return <div className={`chat-entry${item.replyTo ? ' has-reply' : ''}`} key={item.id}>
         {item.replyTo && <div className="chat-reply-preview"><strong>{item.replyTo.name}</strong><span>{item.replyTo.message}</span></div>}
       <article onClick={event => { if (!item.wallet || (event.target as HTMLElement).closest('button,.chat-user-menu')) return; event.stopPropagation(); openPlayerMenu(item.id, event.clientY, event.currentTarget.getBoundingClientRect()) }}>
         <button className={`chat-avatar${streamerLive ? ' streamer-live' : ''}`} onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }} disabled={!item.wallet} title={streamerLive ? `${name} is live on Kick` : item.wallet ? `View ${name}'s profile` : undefined}>{avatar ? <img src={avatar} alt="" /> : <span>{name.slice(0, 1).toUpperCase()}</span>}</button>
-        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}{streamer && <span className="chat-streamer-info" data-tooltip="Streamer" aria-label="Streamer"><img src="/streamer-logo.svg" alt="" /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{item.message}</p></div>
+        <div className="chat-message"><header><span><button type="button" className="chat-name-button" onClick={event => { event.stopPropagation(); if (item.wallet) onViewProfile(item.wallet, item.network) }}>{name}</button>{verified && <BadgeCheck className="verified-badge" aria-label="Verified player" />}<b className={`chat-level chat-level-${chatLevelTier(level)}`} title={`Level ${level}`}>{level}</b>{moderator && <span className="chat-moderator-info" data-tooltip="Mod" aria-label="Mod"><ShieldCheck /></span>}{streamer && <span className="chat-streamer-info" data-tooltip="Streamer" aria-label="Streamer"><img src="/streamer-logo.svg" alt="" /></span>}</span><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header>{meme ? <img className="chat-message-meme" src={meme.src} alt={meme.label} /> : <p>{item.message}</p>}</div>
         <small>{item.network === 'solana' ? 'SOL' : 'MEGA'}</small>
         {selectedPlayer === item.id && item.wallet && (
           <div key={playerMenuSequence} className="chat-user-menu" style={{ '--chat-menu-left': `${playerMenuPosition.left}px`, '--chat-menu-top': `${playerMenuPosition.top}px` } as CSSProperties} onClick={event => event.stopPropagation()}>
@@ -350,13 +397,29 @@ export default function ChatRail({ wallet, network, displayName, isModerator, on
             <button type="button" onClick={() => { onViewProfile(item.wallet!, item.network); setSelectedPlayer('') }}><UserRound /> Check profile</button>
             <button type="button" onClick={() => { setMutedPlayers(current => current.includes(`${item.network}:${item.wallet}`) ? current : [...current, `${item.network}:${item.wallet}`]); setSelectedPlayer('') }}><VolumeX /> Mute locally</button>
             {isModerator && <button type="button" className="delete-message" disabled={Boolean(deletingMessageId)} onClick={() => void deleteMessage(item.id)}><Trash2 /> {deletingMessageId === item.id ? 'Deleting...' : 'Delete message'}</button>}
-            <button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: item.message }); setSelectedPlayer('') }}><Reply /> Reply</button>
+            <button type="button" onClick={() => { setReplyingTo({ id: item.id, name, message: messagePreview(item.message) }); setSelectedPlayer('') }}><Reply /> Reply</button>
           </div>
         )}
       </article></div>
     }) : <div className="chat-empty">No messages yet.<br />Start the global chat.</div>}</div>
     {error && <div className="chat-error">{error}</div>}
-    <form className="chat-compose" onSubmit={send}>{replyingTo && <div className="chat-reply-compose"><span>Replying to <strong>{replyingTo.name}</strong><small>{replyingTo.message}</small></span><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X /></button></div>}<textarea value={draft} onChange={event => setDraft(event.target.value.slice(0, 140))} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={140} placeholder={!wallet ? 'Connect wallet to chat' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={2} /><div><span>{canChat ? '' : `${gamesPlayed}/3 games`}</span><button disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button></div><div className="chat-compose-tools"><button type="button" onClick={() => setShowRules(true)}><Info /> Chat Rules</button><button type="button" onClick={() => setShowRules(true)} aria-label="Open chat rules and remaining characters"><MessageCircle /> <output aria-live="polite">{remainingCharacters}</output></button></div></form>
+    <form className="chat-compose" onSubmit={send}>
+      {replyingTo && <div className="chat-reply-compose"><span>Replying to <strong>{replyingTo.name}</strong><small>{replyingTo.message}</small></span><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X /></button></div>}
+      {isTimedOut && <div className="chat-timeout-status" role="status"><ShieldAlert /><span>You are timed out</span><strong>{timeoutCountdown}</strong></div>}
+      <div className="chat-compose-row">
+        <textarea value={draft} onChange={event => setDraft(event.target.value.slice(0, 140))} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} maxLength={140} placeholder={!wallet ? 'Connect wallet to chat' : isTimedOut ? 'You are timed out' : canChat ? 'Type a message...' : `Play ${3 - gamesPlayed} more verified game${3 - gamesPlayed === 1 ? '' : 's'} to chat`} disabled={!canChat || sending} rows={1} />
+        <div className="chat-composer-picker" ref={composerPicker}>
+          <button type="button" className="chat-picker-toggle" disabled={!canChat || sending} aria-label="Open site emojis and memes" aria-expanded={composerPickerOpen} onClick={() => setComposerPickerOpen(open => !open)}><img src={thinkingFrogMeme} alt="" /></button>
+          {composerPickerOpen && <section className="chat-picker-popover" aria-label="Site emojis and memes">
+            <header><button type="button" className={composerPickerTab === 'emojis' ? 'active' : ''} onClick={() => setComposerPickerTab('emojis')}>EMOJIS</button><button type="button" className={composerPickerTab === 'memes' ? 'active' : ''} onClick={() => setComposerPickerTab('memes')}>MEMES</button></header>
+            {composerPickerTab === 'emojis' ? <div className="chat-emoji-grid">{SITE_EMOJIS.map(emoji => <button type="button" key={emoji} onClick={() => setDraft(current => `${current}${emoji}`.slice(0, 140))}>{emoji}</button>)}</div> : <div className="chat-meme-grid">{SITE_MEMES.map(meme => <button type="button" key={meme.id} onClick={() => sendMeme(meme.id)} disabled={sending}><img src={meme.src} alt="" /><span>{meme.label}</span></button>)}</div>}
+          </section>}
+        </div>
+        <button className="chat-send-button" disabled={!canChat || !draft.trim() || sending} aria-label="Send message"><Send /></button>
+      </div>
+      {!canChat && !isTimedOut && <div className="chat-compose-status">{gamesPlayed}/3 games</div>}
+      <div className="chat-compose-tools"><button type="button" onClick={() => setShowRules(true)}><Info /> Chat Rules</button><button type="button" onClick={() => setShowRules(true)} aria-label="Open chat rules and remaining characters"><MessageCircle /> <output aria-live="polite">{remainingCharacters}</output></button></div>
+    </form>
     <div className="chat-total-bets" aria-label={`${totalBets.toLocaleString()} total bets`}><strong>{totalBets.toLocaleString()}</strong><span>Total Bets</span></div>
     {showRules && <div className="chat-rules-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowRules(false) }}><section className="chat-rules-modal" role="dialog" aria-modal="true" aria-labelledby="chat-rules-title"><button type="button" onClick={() => setShowRules(false)} aria-label="Close chat rules"><X /></button><Info /><h2 id="chat-rules-title">Chat Rules</h2><div className="chat-rules-placeholder" /></section></div>}
     {moderationTarget && (

@@ -7,7 +7,7 @@ import { ed25519 } from '@noble/curves/ed25519'
 import { sha256 } from '@noble/hashes/sha2'
 import {
   AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight, Download,
-  Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut, RefreshCw,
+  Bell, Gift, KeyRound, LoaderCircle, LockKeyhole, LogOut,
   Menu, Settings, Share2, Wallet, X,
 } from 'lucide-react'
 import {
@@ -58,9 +58,6 @@ function App() {
   const [inGame, setInGame] = useState(false)
   const [displayName, setDisplayName] = useState('')
   const [profileLoaded, setProfileLoaded] = useState(false)
-  const [walletActivity, setWalletActivity] = useState<'idle' | 'checking' | 'eligible' | 'blocked' | 'error'>('idle')
-  const [walletActivityError, setWalletActivityError] = useState('')
-  const [walletActivityRetry, setWalletActivityRetry] = useState(0)
   const [usdcBalance, setUsdcBalance] = useState(0)
   const [nextNameChangeAt, setNextNameChangeAt] = useState(0)
   const [savingName, setSavingName] = useState(false)
@@ -79,6 +76,7 @@ function App() {
   })
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [newNotificationHint, setNewNotificationHint] = useState(false)
+  const [chatTimeoutExpiresAt, setChatTimeoutExpiresAt] = useState(0)
   const [selectedNotificationId, setSelectedNotificationId] = useState('')
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [sideAlerts, setSideAlerts] = useState<SideAlert[]>([])
@@ -103,6 +101,11 @@ function App() {
       setNewNotificationHint(false)
       newNotificationHintTimer.current = null
     }, 60_000)
+  }, [])
+  const dismissNewNotificationHint = useCallback(() => {
+    if (newNotificationHintTimer.current !== null) window.clearTimeout(newNotificationHintTimer.current)
+    newNotificationHintTimer.current = null
+    setNewNotificationHint(false)
   }, [])
   const showSideAlert = useCallback((title: string, alertMessage: string, tone: SideAlert['tone']) => {
     const id = `${Date.now()}-${crypto.randomUUID()}`
@@ -160,7 +163,7 @@ function App() {
     setNotifications(current => current.some(item => item.id === notification.id) ? current : [notification, ...current].slice(0, 30))
   }, [])
   useEffect(() => {
-    if (!walletAddress) { notificationsClearedAt.current = 0; setSelectedNotificationId(''); return }
+    if (!walletAddress) { notificationsClearedAt.current = 0; setSelectedNotificationId(''); setChatTimeoutExpiresAt(0); return }
     const network = isMegaEth ? 'megaeth' : 'solana'
     const clearedAt = Number(localStorage.getItem(notificationsClearedKey(network, walletAddress)) ?? 0)
     notificationsClearedAt.current = Number.isFinite(clearedAt) ? clearedAt : 0
@@ -174,8 +177,9 @@ function App() {
     const loadModerationNotifications = async () => {
       try {
         const response = await fetch(`/api/moderation?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
-        const body = await response.json() as { notifications?: { id: string; title: string; message: string; receivedAt: number; read?: boolean }[] }
+        const body = await response.json() as { notifications?: { id: string; title: string; message: string; receivedAt: number; read?: boolean }[]; timeoutExpiresAt?: number | null }
         if (!active || !response.ok || !Array.isArray(body.notifications)) return
+        setChatTimeoutExpiresAt(Number(body.timeoutExpiresAt ?? 0))
         const serverNotifications = body.notifications.filter(notification => notification.receivedAt > notificationsClearedAt.current)
         serverNotifications.forEach(notification => {
           if ((notification.title === 'Warning received' || /timed out/i.test(notification.title)) && !alertedNotificationIds.current.has(notification.id)) {
@@ -291,21 +295,6 @@ function App() {
       .catch(() => { if (active) { setDisplayName(''); setNextNameChangeAt(0); setIsModerator(false); setProfileLoaded(true) } })
     return () => { active = false }
   }, [isMegaEth, walletAddress])
-
-  useEffect(() => {
-    if (!walletAddress) { setWalletActivity('idle'); setWalletActivityError(''); return }
-    let active = true
-    const network = isMegaEth ? 'megaeth' : 'solana'
-    setWalletActivity('checking'); setWalletActivityError('')
-    void fetch(`/api/wallet-eligibility?network=${network}&wallet=${encodeURIComponent(walletAddress)}`)
-      .then(async response => {
-        const body = await response.json() as { eligible?: boolean; message?: string }
-        if (!response.ok) throw new Error(body.message ?? 'Wallet history check failed.')
-        if (active) setWalletActivity(body.eligible ? 'eligible' : 'blocked')
-      })
-      .catch(error => { if (active) { setWalletActivity('error'); setWalletActivityError(error instanceof Error ? error.message : 'Wallet history check failed.') } })
-    return () => { active = false }
-  }, [isMegaEth, walletActivityRetry, walletAddress])
 
   const changeDisplayName = async (name: string, referralCode = '') => {
     if (!walletAddress) return
@@ -425,31 +414,27 @@ function App() {
     setMessage(kickSlug ? 'Kick channel saved.' : 'Kick channel removed.')
     return body.kickUrl ?? ''
   }
-  const chooseExternal = (name: WalletName, readyState: WalletReadyState) => {
+  const chooseExternal = async (name: WalletName, readyState: WalletReadyState) => {
     if (readyState !== WalletReadyState.Installed && readyState !== WalletReadyState.Loadable) {
       setMessage(`${name} is not installed in this browser.`)
       return
     }
-    setEvmAddress(null)
-    setLocalWallet(null)
-    external.select(name)
-    setPendingWallet(name)
-  }
-
-  const connectExternal = async () => {
-    if (!pendingWallet || external.wallet?.adapter.name !== pendingWallet) {
-      setMessage('Select a wallet and try again.')
-      return
-    }
     try {
-      await external.connect()
+      const selected = external.wallets.find(wallet => wallet.adapter.name === name)
+      if (!selected) throw new Error(`${name} is unavailable.`)
+      setEvmAddress(null)
+      setLocalWallet(null)
+      setPendingWallet(name)
+      external.select(name)
+      await selected.adapter.connect()
       localStorage.setItem('testnet-games:last-wallet', 'solana-extension')
       setEvmAddress(null)
-      trackAnalytics('wallet_connected', { wallet_type: String(pendingWallet), network: 'solana_devnet' })
+      trackAnalytics('wallet_connected', { wallet_type: String(name), network: 'solana_devnet' })
       setPendingWallet(null)
       setModal(false)
     } catch (error) {
-      setMessage(error instanceof Error && error.message ? error.message : `Could not connect ${pendingWallet}. Check that the extension is unlocked and try again.`)
+      setPendingWallet(null)
+      setMessage(error instanceof Error && error.message ? error.message : `Could not connect ${name}. Check that the extension is unlocked and try again.`)
     }
   }
 
@@ -619,8 +604,7 @@ function App() {
     return body
   }
 
-  const accessScreen = Boolean(connected && walletAddress && profileLoaded && walletActivity === 'eligible' && !displayName && !showProfile && !showAffiliates)
-  const activityBlocked = Boolean(connected && walletAddress && profileLoaded && (walletActivity === 'blocked' || walletActivity === 'error'))
+  const accessScreen = Boolean(connected && walletAddress && profileLoaded && !displayName && !showProfile && !showAffiliates)
   useEffect(() => {
     if (!accessScreen) return
     const previousOverflow = document.body.style.overflow
@@ -666,7 +650,7 @@ function App() {
         <HeaderBalance balance={balance} usdcBalance={usdcBalance} network={isMegaEth ? 'megaeth' : 'solana'} walletIcon={isMegaEth ? undefined : external.wallet?.adapter.icon} walletKind={isMegaEth ? 'metamask' : localWallet ? 'site' : 'external'} walletName={connectionType} />
         <RewardsPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onClaim={claimReward} onOpenLeaderboard={() => { setShowDinoTokens(true); setShowProfile(false); setShowAffiliates(false); setInGame(false) }} onHeaderHover={() => { setNotificationsOpen(false); setSelectedNotificationId('') }} />
         <div className="header-notifications" ref={notificationsRef}>
-          <button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setSelectedNotificationId(''); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>
+          <button type="button" className={`header-notification-button ${unreadNotifications ? 'unread' : ''}`} onClick={() => { dismissNewNotificationHint(); setNotificationsOpen(open => !open); setSelectedNotificationId(''); setProfileMenu(false) }} aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell />{unreadNotifications > 0 && <i>{unreadNotifications > 9 ? '9+' : unreadNotifications}</i>}</button>
           {newNotificationHint && !notificationsOpen && <div className="new-notification-hint"><Bell />New notification</div>}
           {notificationsOpen && <div className="header-notification-menu">
             <header><strong>Notifications</strong><button type="button" disabled={!notifications.length} onClick={clearNotifications}>Clear</button></header>
@@ -682,10 +666,10 @@ function App() {
         <div className="header-profile" onMouseEnter={keepProfileMenuOpen} onMouseLeave={scheduleProfileMenuClose} onFocus={keepProfileMenuOpen} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProfileMenu(false) }}><button className="header-avatar" onClick={openProfileButton} aria-label="Open profile menu" aria-expanded={profileMenu}>{headerAvatar ? <img src={headerAvatar} alt="Profile" /> : <span>{(displayName || walletAddress).slice(0, 1).toUpperCase()}</span>}</button><button type="button" className="header-profile-menu-toggle" onClick={() => setProfileMenu(open => !open)} aria-label="Toggle profile menu" aria-expanded={profileMenu}><Menu /></button>{profileMenu && <div className="profile-menu"><button onClick={() => openProfile('statistics')}><BarChart3 /> Statistics</button><button onClick={openAffiliates}><Share2 /> Affiliates</button><button onClick={() => openProfile('settings')}><Settings /> Settings</button><button onClick={() => openProfile('transactions')}><Wallet /> Transactions</button><button onClick={() => void disconnect()}><LogOut /> Disconnect</button></div>}</div>
       </div> : <button className="header-connect" onClick={() => { setStep('choose'); setModal(true) }}>Connect wallet</button>}
     </header>
-    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} onDeleteMessage={deleteChatMessage} onError={detail => showSideAlert('Error', detail, 'error')} collapsed={chatCollapsed} onToggleCollapsed={() => setChatCollapsed(current => !current)} />
+    <ChatRail wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} displayName={displayName} isModerator={isModerator} timeoutExpiresAt={chatTimeoutExpiresAt} onViewProfile={viewChatProfile} onTipPlayer={setTipTarget} onReplyNotification={addReplyNotification} onModerate={moderatePlayer} onDeleteMessage={deleteChatMessage} onError={detail => showSideAlert('Error', detail, 'error')} collapsed={chatCollapsed} onToggleCollapsed={() => setChatCollapsed(current => !current)} />
 
     <main>
-      {!connected ? <SingleplayerDinoGame address={null} paymentNetwork="solana" localWallet={null} sendTransaction={external.sendTransaction} connection={connection} onBalanceSpent={() => undefined} onViewProfile={viewChatProfile} onExit={() => undefined} onConnect={() => { setStep('choose'); setModal(true) }} /> : (!profileLoaded || walletActivity === 'checking' || walletActivity === 'idle') && walletAddress ? (
+      {!connected ? <SingleplayerDinoGame address={null} paymentNetwork="solana" localWallet={null} sendTransaction={external.sendTransaction} connection={connection} onBalanceSpent={() => undefined} onViewProfile={viewChatProfile} onExit={() => undefined} onConnect={() => { setStep('choose'); setModal(true) }} /> : !profileLoaded && walletAddress ? (
         <section className="returning-player-loading"><LoaderCircle className="spin" /><span>LOADING PLAYER</span><p>Opening your game…</p></section>
       ) : viewingOwnProfile && walletAddress && viewedProfile ? (
         <ProfilePage isOwn initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onSetReferralCode={setJoinedReferralCode} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} />
@@ -693,7 +677,7 @@ function App() {
         <DinoTokensPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onBack={() => { setShowDinoTokens(false); setInGame(true) }} />
       ) : showAffiliates && walletAddress ? (
         <AffiliatesPage wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} onSaveCode={saveAffiliateCode} onBack={() => setShowAffiliates(false)} />
-      ) : displayName && walletAddress && walletActivity === 'eligible' ? (
+      ) : displayName && walletAddress ? (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} onConnect={() => { setStep('choose'); setModal(true) }} />
       ) : (
         <SingleplayerDinoGame address={walletAddress} paymentNetwork={isMegaEth ? 'megaeth' : 'solana'} localWallet={localWallet} sendTransaction={external.sendTransaction} signTransaction={external.signTransaction as ((transaction: Transaction) => Promise<Transaction>) | undefined} connection={connection} onBalanceSpent={recordConfirmedSpend} onViewProfile={viewChatProfile} onExit={() => openProfile('statistics')} onConnect={() => { setStep('choose'); setModal(true) }} />
@@ -701,8 +685,6 @@ function App() {
     </main>
 
     {accessScreen && walletAddress && <SignupOverlay wallet={walletAddress} network={isMegaEth ? 'megaeth' : 'solana'} saving={savingName} onSubmit={changeDisplayName} onDisconnect={() => void disconnect()} />}
-    {activityBlocked && walletAddress && <WalletActivityOverlay network={isMegaEth ? 'megaeth' : 'solana'} error={walletActivity === 'error' ? walletActivityError : ''} onRetry={() => setWalletActivityRetry(current => current + 1)} onDisconnect={() => void disconnect()} />}
-
     {showProfile && !viewingOwnProfile && walletAddress && viewedProfile && <div className="profile-inspect-backdrop" role="dialog" aria-modal="true" aria-label="Player profile" onMouseDown={event => { if (event.target === event.currentTarget) setShowProfile(false) }}><div className="profile-inspect-modal"><ProfilePage isOwn={false} initialSection={profileSection} wallet={viewedProfile.wallet} network={viewedProfile.network} displayName={displayName} canChangeName={!balanceUnavailable && balance !== null && balance > NAME_BALANCE} savingName={savingName} nextNameChangeAt={nextNameChangeAt} onChangeName={changeDisplayName} onSetReferralCode={setJoinedReferralCode} onChangeAvatar={changeAvatar} onChangeKickChannel={changeKickChannel} onTipPlayer={setTipTarget} canModerate={isModerator} onModerate={moderatePlayer} onBack={() => setShowProfile(false)} /></div></div>}
 
     <footer className="site-footer">
@@ -718,12 +700,10 @@ function App() {
       wallets={external.wallets}
       pendingWallet={pendingWallet}
       connecting={external.connecting}
-      selectedReady={Boolean(pendingWallet && external.wallet?.adapter.name === pendingWallet)}
       stored={hasStoredWallet()}
       connectingMetaMask={connectingMetaMask}
       onMetaMask={activateMetaMask}
       onExternal={chooseExternal}
-      onConnectExternal={connectExternal}
       onClose={() => setModal(false)}
       onCreated={async (wallet) => { await activateSiteWallet(wallet); setStep('backup') }}
       onUnlocked={async wallet => { await activateSiteWallet(wallet); setModal(false) }}
@@ -735,24 +715,6 @@ function App() {
 
 function cleanReferralCode(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12)
-}
-
-function WalletActivityOverlay({ network, error, onRetry, onDisconnect }: {
-  network: 'solana' | 'megaeth'
-  error: string
-  onRetry: () => void
-  onDisconnect: () => void
-}) {
-  return <div className="signup-backdrop wallet-activity-backdrop" role="dialog" aria-modal="true" aria-labelledby="wallet-activity-title">
-    <section className="wallet-activity-modal">
-      <span><Wallet /></span>
-      <small>WALLET CHECK</small>
-      <h2 id="wallet-activity-title">One transaction required</h2>
-      <p>{error || `This ${network === 'solana' ? 'Solana devnet' : 'MegaETH testnet'} wallet has no confirmed transaction history yet. Make at least one transaction, then retry.`}</p>
-      <button className="signup-submit" onClick={onRetry}><RefreshCw /> RETRY CHECK</button>
-      <button className="wallet-activity-disconnect" onClick={onDisconnect}><LogOut /> Disconnect wallet</button>
-    </section>
-  </div>
 }
 
 function SignupOverlay({ wallet, network, saving, onSubmit, onDisconnect }: {
@@ -793,9 +755,9 @@ function SignupOverlay({ wallet, network, saving, onSubmit, onDisconnect }: {
   </div>
 }
 
-function WalletModal({ step, setStep, wallets, pendingWallet, connecting, connectingMetaMask, selectedReady, stored, onExternal, onConnectExternal, onMetaMask, onClose, onCreated, onUnlocked }: {
-  step: ModalStep; setStep: (step: ModalStep) => void; wallets: ReturnType<typeof useWallet>['wallets']; pendingWallet: WalletName | null; connecting: boolean; connectingMetaMask: boolean; selectedReady: boolean; stored: boolean;
-  onExternal: (name: WalletName, state: WalletReadyState) => void; onConnectExternal: () => void; onMetaMask: () => void; onClose: () => void; onCreated: (wallet: Keypair) => Promise<void>; onUnlocked: (wallet: Keypair) => Promise<void>;
+function WalletModal({ step, setStep, wallets, pendingWallet, connecting, connectingMetaMask, stored, onExternal, onMetaMask, onClose, onCreated, onUnlocked }: {
+  step: ModalStep; setStep: (step: ModalStep) => void; wallets: ReturnType<typeof useWallet>['wallets']; pendingWallet: WalletName | null; connecting: boolean; connectingMetaMask: boolean; stored: boolean;
+  onExternal: (name: WalletName, state: WalletReadyState) => Promise<void>; onMetaMask: () => void; onClose: () => void; onCreated: (wallet: Keypair) => Promise<void>; onUnlocked: (wallet: Keypair) => Promise<void>;
 }) {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -831,7 +793,7 @@ function WalletModal({ step, setStep, wallets, pendingWallet, connecting, connec
 
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={event => event.stopPropagation()}><button className="close" onClick={onClose}><X /></button>
     {step !== 'choose' && step !== 'backup' && <button className="back" onClick={() => { setError(''); setStep('choose') }}>← Back</button>}
-    {step === 'choose' && <><div className="modal-title"><span><Wallet /></span><div><h2>Connect wallet</h2><p>Choose Solana devnet or MetaMask on MegaETH testnet.</p></div></div><div className="wallet-list"><button onClick={onMetaMask} disabled={connectingMetaMask}><span className="metamask-mark">M</span><div><strong>MetaMask</strong><small>MegaETH testnet</small></div>{connectingMetaMask ? <LoaderCircle className="spin" /> : <ChevronRight />}</button>{visibleWallets.map(item => <button className={pendingWallet === item.adapter.name ? 'selected' : ''} key={item.adapter.name} onClick={() => onExternal(item.adapter.name, item.readyState)}><img src={item.adapter.icon} alt="" /><div><strong>{item.adapter.name}</strong><small>{item.readyState === WalletReadyState.Installed ? 'Detected' : item.readyState}</small></div>{pendingWallet === item.adapter.name ? <Check /> : <ChevronRight />}</button>)}</div>{pendingWallet && <button className="primary external-connect" disabled={!selectedReady || connecting} onClick={onConnectExternal}>{connecting ? <><LoaderCircle className="spin" /> CONNECTING...</> : <>CONNECT {pendingWallet.toUpperCase()} <ArrowRight /></>}</button>}<div className="divider"><span>OR</span></div>{stored ? <button className="site-option" onClick={() => setStep('unlock')}><span><LockKeyhole /></span><div><strong>Unlock Solana site wallet</strong><small>An encrypted wallet exists on this device</small></div><ChevronRight /></button> : <button className="site-option" onClick={() => setStep('create')}><span><KeyRound /></span><div><strong>Create Solana site wallet</strong><small>Encrypted and stored only in this browser</small></div><ChevronRight /></button>}</>}
+    {step === 'choose' && <><div className="modal-title"><span><Wallet /></span><div><h2>Connect wallet</h2><p>Choose Solana devnet or MetaMask on MegaETH testnet.</p></div></div><div className="wallet-list"><button onClick={onMetaMask} disabled={connectingMetaMask || Boolean(pendingWallet)}><span className="metamask-mark">M</span><div><strong>MetaMask</strong><small>MegaETH testnet</small></div>{connectingMetaMask ? <LoaderCircle className="spin" /> : <ChevronRight />}</button>{visibleWallets.map(item => <button className={pendingWallet === item.adapter.name ? 'selected' : ''} disabled={Boolean(pendingWallet) || connectingMetaMask} key={item.adapter.name} onClick={() => void onExternal(item.adapter.name, item.readyState)}><img src={item.adapter.icon} alt="" /><div><strong>{item.adapter.name}</strong><small>{pendingWallet === item.adapter.name ? 'Connecting…' : item.readyState === WalletReadyState.Installed ? 'Detected' : item.readyState}</small></div>{pendingWallet === item.adapter.name && connecting ? <LoaderCircle className="spin" /> : <ChevronRight />}</button>)}</div><div className="divider"><span>OR</span></div>{stored ? <button className="site-option" onClick={() => setStep('unlock')}><span><LockKeyhole /></span><div><strong>Unlock Solana site wallet</strong><small>An encrypted wallet exists on this device</small></div><ChevronRight /></button> : <button className="site-option" onClick={() => setStep('create')}><span><KeyRound /></span><div><strong>Create Solana site wallet</strong><small>Encrypted and stored only in this browser</small></div><ChevronRight /></button>}</>}
     {step === 'create' && <form onSubmit={create}><div className="form-icon"><KeyRound /></div><h2>Create site wallet</h2><p>A new Solana keypair will be encrypted with your password and stored in this browser.</p><label>PASSWORD<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 10 characters" autoFocus /></label><label>CONFIRM PASSWORD<input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} /></label>{error && <div className="form-error"><AlertTriangle />{error}</div>}<button className="primary" disabled={busy}>{busy ? 'CREATING…' : 'CREATE WALLET'} <ArrowRight /></button></form>}
     {step === 'unlock' && <form onSubmit={unlock}><div className="form-icon"><LockKeyhole /></div><h2>Unlock site wallet</h2><p>Your password decrypts the wallet locally. It is never transmitted.</p><label>PASSWORD<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoFocus /></label>{error && <div className="form-error"><AlertTriangle />{error}</div>}<button className="primary" disabled={busy}>{busy ? 'UNLOCKING…' : 'UNLOCK WALLET'} <ArrowRight /></button><label className="import-button">IMPORT RECOVERY FILE<input type="file" accept="application/json" onChange={e => importFile(e.target.files?.[0])} /></label></form>}
     {step === 'backup' && createdWallet && <div className="backup"><span className="warning-mark"><AlertTriangle /></span><h2>Back up your wallet now</h2><p>This is the only recovery copy. If browser storage is cleared and you do not have it, the wallet cannot be recovered.</p><div className="address-box"><small>PUBLIC ADDRESS</small><code>{createdWallet.publicKey.toBase58()}</code></div><button className="primary" onClick={() => exportRecovery(createdWallet)}><Download /> DOWNLOAD RECOVERY FILE</button><button className="text-button" onClick={onClose}>I saved it — continue</button></div>}

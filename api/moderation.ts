@@ -95,7 +95,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
       if ((network !== 'solana' && network !== 'megaeth') || !wallet) throw new Error('A valid wallet and network are required.')
       const redis = redisClient()
       await publishEndedTimeout(redis, network, wallet)
-      const rows = await redis.lrange<unknown>(notificationKey(network, wallet), 0, 29)
+      const [rows, timeoutTtl] = await Promise.all([
+        redis.lrange<unknown>(notificationKey(network, wallet), 0, 29),
+        redis.pttl(timeoutKey(network, wallet)),
+      ])
       const notifications = rows.flatMap(row => {
         if (row && typeof row === 'object') return [row]
         if (typeof row !== 'string') return []
@@ -104,7 +107,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
           return parsed && typeof parsed === 'object' ? [parsed] : []
         } catch { return [] }
       })
-      return response.status(200).json({ notifications })
+      return response.status(200).json({ notifications, timeoutExpiresAt: timeoutTtl > 0 ? Date.now() + timeoutTtl : null })
     }
     if (request.method !== 'POST') return response.status(405).json({ message: 'Method not allowed.' })
     const action = request.body?.action
